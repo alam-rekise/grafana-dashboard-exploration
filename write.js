@@ -88,12 +88,18 @@ header.forEach((name, idx) => {
   colIndex[name] = idx;
 });
 
-// Validate that all required columns exist in the CSV
+// Validate timestamp column (null means use current time for summary data)
 const timestampCol = typeConfig.timestamp_column;
-if (colIndex[timestampCol] === undefined) {
+const useCurrentTime = timestampCol === null;
+
+if (!useCurrentTime && colIndex[timestampCol] === undefined) {
   console.error(`Timestamp column "${timestampCol}" not found in CSV header.`);
   console.error("Available columns:", header.join(", "));
   process.exit(1);
+}
+
+if (useCurrentTime) {
+  console.log("Timestamp: using current time (summary data, no timestamp column)");
 }
 
 for (const [fieldName, fieldDef] of Object.entries(typeConfig.fields)) {
@@ -126,12 +132,20 @@ for (let i = 1; i < rows.length; i++) {
   const columns = row.split(",");
 
   // Get timestamp
-  const timestampStr = columns[colIndex[timestampCol]];
-  const timestampMs = new Date(timestampStr).getTime();
+  let timestampMs;
+  let timestampStr;
 
-  if (isNaN(timestampMs)) {
-    if (i <= 3) console.log(`  Skipping row ${i}: invalid timestamp "${timestampStr}"`);
-    continue;
+  if (useCurrentTime) {
+    timestampMs = Date.now();
+    timestampStr = "(current time)";
+  } else {
+    timestampStr = columns[colIndex[timestampCol]];
+    timestampMs = new Date(timestampStr).getTime();
+
+    if (isNaN(timestampMs)) {
+      if (i <= 3) console.log(`  Skipping row ${i}: invalid timestamp "${timestampStr}"`);
+      continue;
+    }
   }
 
   // Create point with measurement name from config

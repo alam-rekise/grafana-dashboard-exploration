@@ -129,7 +129,18 @@ Timestamp: Start Time from CSV (millisecond precision)
 - Percentages displayed on each slice
 - Legend on the right with mode names
 
-## Step 5: Adding New Mission Data
+## Step 5: Feed Power Consumption Data
+
+```bash
+node write.js --mission mission-001 --type power-consumption --csv "./pm-data/mission_time_report.xlsx - Power Consumption.csv"
+```
+
+This feeds the battery summary data (5 rows, one per mode). The bar charts in the dashboard
+will show total battery drop and consumption rate per mode.
+
+See `concepts/bar-charts.md` for detailed explanation of how bar charts work with summary data.
+
+## Step 6: Adding New Mission Data
 
 When you have a new CSV from a new mission:
 

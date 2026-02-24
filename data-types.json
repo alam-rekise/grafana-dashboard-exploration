@@ -10,6 +10,22 @@
       "duration_s": { "column": "Duration (s)", "type": "float" }
     }
   },
+  "power-consumption": {
+    "measurement": "power_consumption",
+    "timestamp_column": null,
+    "tags": {
+      "mode": "Mode"
+    },
+    "fields": {
+      "total_battery_drop": {
+        "column": "Total Battery Drop (%)",
+        "type": "float"
+      },
+      "duration_hours": { "column": "Duration (hours)", "type": "float" },
+      "rate_per_hour": { "column": "Rate (%/hour)", "type": "float" },
+      "sample_pairs": { "column": "Sample Pairs", "type": "int" }
+    }
+  },
   "navigation": {
     "measurement": "navigation",
     "timestamp_column": "Timestamp",

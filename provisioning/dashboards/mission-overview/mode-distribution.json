@@ -29,6 +29,188 @@
       "fieldConfig": {
         "defaults": {
           "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "colorByField": "Rate (%/hour)",
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "always",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "mode",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "from(bucket: \"vessel-data\")                  \n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"power_consumption\")\n  |> filter(fn: (r) => r._field == \"rate_per_hour\")                                                                                                                                                         \n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> keep(columns: [\"mode\", \"_value\"])                                                                                                                                                                      \n  |> group()                                                                                                                                                                                                \n  |> rename(columns: {_value: \"Rate (%/hour)\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Battery consumption rate",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 2,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.89,
+        "colorByField": "Battery Drop (%)",
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "always",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "mode",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"power_consumption\")\n  |> filter(fn: (r) => r._field == \"total_battery_drop\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> group()\n  |> rename(columns: {_value: \"Battery Drop (%)\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Total battery drop %",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
             "mode": "palette-classic"
           },
           "custom": {
@@ -47,7 +229,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 0
+        "y": 16
       },
       "id": 1,
       "options": {
@@ -84,7 +266,6 @@
         }
       ],
       "title": "Mode distribution",
-      "transparent": true,
       "type": "piechart"
     }
   ],
@@ -101,14 +282,18 @@
           "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
         },
         "definition": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(bucket: \"vessel-data\", tag: \"mission\")",
-        "name": "mission",
+        "hide": 0,
+        "includeAll": false,
         "label": "Mission",
+        "multi": false,
+        "name": "mission",
+        "options": [],
         "query": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(bucket: \"vessel-data\", tag: \"mission\")",
         "refresh": 1,
-        "type": "query",
+        "regex": "",
+        "skipUrlSync": false,
         "sort": 1,
-        "includeAll": false,
-        "multi": false
+        "type": "query"
       }
     ]
   },
@@ -120,6 +305,6 @@
   "timezone": "",
   "title": "Mission mode distribution",
   "uid": "b13d2a0c-4ab2-4a4d-8552-3531e2bc019b",
-  "version": 2,
+  "version": 7,
   "weekStart": ""
 }

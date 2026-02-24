@@ -11,8 +11,9 @@ npm install
 # 2. Start InfluxDB and Grafana
 docker compose up -d
 
-# 3. Feed mission data
-node write.js --mission mission-001 --type mission-segments --csv ./pm-data/your-file.csv
+# 3. Feed mission data (both types)
+node write.js --mission mission-001 --type mission-segments --csv "./pm-data/mission_time_report.xlsx - Mode Segments.csv"
+node write.js --mission mission-001 --type power-consumption --csv "./pm-data/mission_time_report.xlsx - Power Consumption.csv"
 
 # 4. Open Grafana → http://localhost:3000 (admin/admin)
 #    Dashboard is auto-loaded. Select mission from dropdown. Set time range to cover your data.
@@ -23,6 +24,8 @@ node write.js --mission mission-001 --type mission-segments --csv ./pm-data/your
 ```
 influxWithGraphana/
 │
+├── scripts/
+│   └── reset-and-seed.sh          # Wipes InfluxDB data and re-feeds all CSVs for a mission
 ├── docker-compose.yml              # Defines InfluxDB + Grafana containers
 ├── write.js                        # CSV → InfluxDB ingestion script (config-driven)
 ├── data-types.json                 # Defines how each CSV type maps to InfluxDB (measurements, tags, fields)
@@ -36,7 +39,7 @@ influxWithGraphana/
 │   └── dashboards/
 │       ├── provider.yml            # Tells Grafana to scan this directory for dashboard JSONs
 │       └── mission-overview/       # Folder name → becomes a folder in Grafana sidebar
-│           └── mode-distribution.json  # Pie chart: time spent in each operational mode
+│           └── mode-distribution.json  # Dashboard: pie chart + bar charts (all panels)
 │
 ├── volumes/                        # Persistent data (bind-mounted into containers)
 │   ├── influxdb-data/              # InfluxDB database files (measurements, indexes)
@@ -50,7 +53,8 @@ influxWithGraphana/
     ├── docker-volumes.md           # Volume types: anonymous, named, bind mounts
     ├── grafana-provisioning.md     # How Grafana auto-loads datasources and dashboards
     ├── grafana-template-variables.md # Time picker vs template variable dropdowns
-    └── influxdb-basics.md          # Buckets, measurements, tags vs fields, Flux queries
+    ├── influxdb-basics.md          # Buckets, measurements, tags vs fields, Flux queries
+    └── bar-charts.md               # Bar chart implementation: battery data, summary data handling
 ```
 
 ## File Descriptions
@@ -72,7 +76,7 @@ These files are auto-loaded by Grafana on startup — no manual UI setup needed.
 | ---- | ------- |
 | `provisioning/datasources/influxdb.yml` | Configures the InfluxDB datasource in Grafana (URL, token, org, bucket). Uses Flux query language. Grafana connects to InfluxDB via Docker network at `http://influxdb:8086`. |
 | `provisioning/dashboards/provider.yml` | Tells Grafana to scan for JSON dashboard files in this directory. `foldersFromFilesStructure: true` means subdirectory names become Grafana folders. |
-| `provisioning/dashboards/mission-overview/mode-distribution.json` | Pie chart dashboard showing time distribution across operational modes (Direct, Idle, Navigation, Station, Voyage, NO_BAG_RECORD). Includes a "Mission" dropdown variable for filtering by mission. |
+| `provisioning/dashboards/mission-overview/mode-distribution.json` | Dashboard with 3 panels: pie chart (mode time distribution), bar chart (total battery drop by mode), bar chart (battery consumption rate by mode). All share a "Mission" dropdown variable for filtering. |
 
 ### Data Directories
 
@@ -94,6 +98,7 @@ These files are auto-loaded by Grafana on startup — no manual UI setup needed.
 | `concepts/grafana-provisioning.md` | How Grafana auto-loads config from files. Provisioning vs volumes. Workflow for exporting dashboards. |
 | `concepts/grafana-template-variables.md` | Time picker vs template variables. How the Mission dropdown works. How variables are stored in JSON. |
 | `concepts/influxdb-basics.md` | InfluxDB concepts: buckets, measurements, tags vs fields, Flux queries, writing data with Node.js. |
+| `concepts/bar-charts.md` | How the battery bar charts work: summary data vs time-series, why timestamps don't affect bar rendering, data-types.json config, Flux queries, how to modify. |
 
 ## Feeding Data
 
@@ -111,19 +116,20 @@ Currently defined in `data-types.json`:
 
 | Type | Measurement | Description |
 | ---- | ----------- | ----------- |
-| `mission-segments` | `mission_segments` | Mode segments (Direct, Idle, Navigation, etc.) with duration |
-| `navigation` | `navigation` | GPS/navigation data (latitude, longitude, heading, speed) |
+| `mission-segments` | `mission_segments` | Mode segments (Direct, Idle, Navigation, etc.) with duration. Time-series data. |
+| `power-consumption` | `power_consumption` | Battery stats per mode (total drop, rate, duration). Summary data — no timestamps. |
+| `navigation` | `navigation` | GPS/navigation data (latitude, longitude, heading, speed). Placeholder for future use. |
 
 ### Examples
 
 ```bash
 # Feed mission mode segments
-node write.js --mission mission-001 --type mission-segments --csv ./pm-data/mode-segments.csv
+node write.js --mission mission-001 --type mission-segments --csv "./pm-data/mission_time_report.xlsx - Mode Segments.csv"
 
-# Feed navigation data
-node write.js --mission mission-001 --type navigation --csv ./pm-data/nav-data.csv
+# Feed power consumption summary
+node write.js --mission mission-001 --type power-consumption --csv "./pm-data/mission_time_report.xlsx - Power Consumption.csv"
 
-# Both data types share the same mission tag, so Grafana can filter by mission across all data
+# All data types share the same mission tag, so Grafana can filter by mission across all charts
 ```
 
 ### Adding a New Data Type
