@@ -1,0 +1,24 @@
+{
+  "mission-segments": {
+    "measurement": "mission_segments",
+    "timestamp_column": "Start Time",
+    "tags": {
+      "mode": "Mode"
+    },
+    "fields": {
+      "segment_number": { "column": "Segment #", "type": "int" },
+      "duration_s": { "column": "Duration (s)", "type": "float" }
+    }
+  },
+  "navigation": {
+    "measurement": "navigation",
+    "timestamp_column": "Timestamp",
+    "tags": {},
+    "fields": {
+      "latitude": { "column": "Latitude", "type": "float" },
+      "longitude": { "column": "Longitude", "type": "float" },
+      "heading": { "column": "Heading", "type": "float" },
+      "speed": { "column": "Speed", "type": "float" }
+    }
+  }
+}

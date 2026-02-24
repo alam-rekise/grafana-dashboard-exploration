@@ -1,0 +1,27 @@
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - ./volumes/influxdb-data:/var/lib/influxdb2
+      - ./volumes/influxdb-config:/etc/influxdb2
+    networks:
+      - influx-net
+
+  grafana:
+    image: grafana/grafana:10.1.2
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./volumes/grafana-data:/var/lib/grafana
+      - ./provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./provisioning/dashboards:/etc/grafana/provisioning/dashboards
+    networks:
+      - influx-net
+
+networks:
+  influx-net:
+    driver: bridge

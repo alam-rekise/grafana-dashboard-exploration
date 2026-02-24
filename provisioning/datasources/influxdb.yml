@@ -1,0 +1,14 @@
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB
+    type: influxdb
+    access: proxy
+    uid: edd9ef0c-7cef-4d36-a9a5-ee779e3353e1
+    url: http://influxdb:8086
+    jsonData:
+      version: Flux
+      organization: Rekise Marine
+      defaultBucket: vessel-data
+    secureJsonData:
+      token: XZvi_7cfAtdoSsmdG_-1enydzbGSlTYSqmEgB2XAuwxRqpzXbeP_ThABKMyLPfCmOr1rueEXQde_wthNJwz1tw==

@@ -1,0 +1,125 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": [],
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "displayLabels": [
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true,
+          "values": []
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mission_segments\")\n  |> filter(fn: (r) => r._field == \"duration_s\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group(columns: [\"mode\"])\n  |> sum()\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> group()\n  ",
+          "refId": "A"
+        }
+      ],
+      "title": "Mode distribution",
+      "transparent": true,
+      "type": "piechart"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "datasource": {
+          "type": "influxdb",
+          "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+        },
+        "definition": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(bucket: \"vessel-data\", tag: \"mission\")",
+        "name": "mission",
+        "label": "Mission",
+        "query": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(bucket: \"vessel-data\", tag: \"mission\")",
+        "refresh": 1,
+        "type": "query",
+        "sort": 1,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Mission mode distribution",
+  "uid": "b13d2a0c-4ab2-4a4d-8552-3531e2bc019b",
+  "version": 2,
+  "weekStart": ""
+}
