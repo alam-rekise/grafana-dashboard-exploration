@@ -1,0 +1,178 @@
+======================================================================
+MODE TIMELINE (/control_mode/status) — first 3 messages
+======================================================================
+
+  Timestamp: 2026-02-22 23:30:20.316
+  KeyValue pairs:
+    Idle = true <<<< ACTIVE
+    Direct = true <<<< ACTIVE
+    Voyage = false
+    Maneuver = false
+    Station = false
+    DP = false
+    Navigation = false
+
+  Timestamp: 2026-02-22 23:30:20.530
+  KeyValue pairs:
+    Idle = true <<<< ACTIVE
+    Direct = true <<<< ACTIVE
+    Voyage = false
+    Maneuver = false
+    Station = false
+    DP = false
+    Navigation = false
+
+  Timestamp: 2026-02-22 23:30:20.716
+  KeyValue pairs:
+    Idle = true <<<< ACTIVE
+    Direct = true <<<< ACTIVE
+    Voyage = false
+    Maneuver = false
+    Station = false
+    DP = false
+    Navigation = false
+
+======================================================================
+/imu/ellipse/sbg_ekf_euler — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:19.956
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  roll:           -0.004593859892338514
+  pitch:          0.004471892956644297
+  yaw:            1.3641806840896606
+  accuracy_roll:  0.004353416617959738
+  accuracy_pitch: 0.004353540483862162
+  accuracy_yaw:   0.00704243453219533
+  solution_mode:  2
+  heading_valid:  True
+  position_valid: False
+
+======================================================================
+/odometry/filtered — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.129
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  position:    (-72.403073, -77.578598, 0.000008)
+  orientation: (-0.003955, -0.001330, 0.775756, 0.631019)
+  linear_vel:  (0.002883, 0.022771, 0.000012)
+  angular_vel: (-0.010689, 0.001707, -0.002970)
+
+======================================================================
+/gnss/fix — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.176
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  latitude:  22.539162599999997
+  longitude: 88.29723369999999
+  altitude:  -59.989000000000004
+  status:    0
+  service:   1
+
+======================================================================
+/telemetry/state — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.240
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  latitude:           22.539174766754908
+  longitude:          88.29723096775597
+  heading:            6.078118801116943
+  depth:              nan
+  altitude:           nan
+  vertical_speed:     nan
+  speed_over_ground:  0.031225264072418213
+  course_over_ground: 2.285429000854492
+  yaw_rate:           -0.002861759392544627
+
+======================================================================
+/pm/feedback — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.298
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  load_current:  0.0
+  bus_voltage:   26.51099967956543
+  temperature:   22.81999969482422
+  load_on_off:   False
+  adc_on_off:    True
+  card_id (tag): pm_altimeter(16)
+
+======================================================================
+/telemetry/battery_state — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.558
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  voltage:           26.5
+  charge_percentage: 0.8550000190734863
+  is_charging:       False
+  error_code:        0
+
+======================================================================
+/moving_base_second/navheading — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.575
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  orientation:   (0.000000, 0.000000, 0.707107, 0.707107)
+  angular_vel:   (0.000000, 0.000000, 0.000000)
+
+======================================================================
+/vessel/mode — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.623
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  value: 0 (0=STAGING, 1=ACTIVE)
+
+======================================================================
+/battery_state — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.675
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  voltage:       26.5
+  current:       -3.700000047683716
+  charge:        359.70001220703125
+  capacity:      nan
+  percentage:    0.8550000190734863
+  temperature:   23.0
+  present:       True
+
+======================================================================
+/leak_detect — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.784
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  status: 0
+
+======================================================================
+/temperature — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.784
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  temperature_c: 23.31
+
+======================================================================
+/humidity — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.784
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  relative_humidity: 32.32
+
+======================================================================
+/pressure — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:20.784
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  fluid_pressure: 100437.5
+
+======================================================================
+/pack_status — first message
+======================================================================
+  Timestamp: 2026-02-22 23:30:21.075
+  Mode tag:  Idle (all 597 mode messages show Idle)
+  pack_state_of_charge: 85.5
+  pack_voltage:         26.5
+  pack_current:         -3.5
+  pack_health:          99.0
+  pack_amphours:        359.70001220703125
+  pack_depth_of_discharge: 14.0
+  discharge_enable:     True
+  charge_enable:        False
+  pack_summed_voltage:  26.549999237060547
+  total_pack_cycles:    301.0

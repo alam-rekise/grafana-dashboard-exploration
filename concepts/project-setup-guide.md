@@ -1,12 +1,15 @@
 # Project Setup Guide
 
+**Status: Prototype** — see `concepts/project-status.md` for roadmap.
+
 Complete guide to set up the InfluxDB + Grafana mission data visualization pipeline from scratch.
 
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- Node.js (v18+) installed
-- A mission CSV file with columns: `Segment #, Mode, Start (ns), End (ns), Duration (s), Start Time, End Time`
+- Python 3.10+ with `pip3 install influxdb-client` (for ROS bag extraction)
+- ROS2 .db3 bag files from a mission
+- (Optional) Node.js v18+ for legacy CSV pipeline
 
 ## Project Structure
 
@@ -31,13 +34,15 @@ influxWithGraphana/
 └── concepts/                                   # Documentation and learning notes
 ```
 
-## Step 1: Install Node Dependencies
+## Step 1: Install Dependencies
 
 ```bash
+# For ROS bag extraction (primary pipeline)
+pip3 install influxdb-client
+
+# For CSV ingestion (legacy pipeline, optional)
 npm install
 ```
-
-This installs `@influxdata/influxdb-client` — the official InfluxDB v2 client for Node.js.
 
 ## Step 2: Start the Containers
 
@@ -72,40 +77,42 @@ On the very first run, InfluxDB needs initial configuration:
 
 ## Step 3: Feed Mission Data
 
-Place your CSV file in the project directory or anywhere accessible, then run:
+### Option A: From ROS Bags (Primary)
+
+```bash
+# Single bag file
+python3 extract-bag.py --mission rosbag-20260223 --bag /path/to/file.db3
+
+# Entire directory with parallel processing
+python3 extract-bag.py --mission rosbag-20260223 --bag-dir /path/to/rosbags/ --workers 8
+
+# Dry run (test without writing)
+python3 extract-bag.py --mission test --bag /path/to/file.db3 --dry-run
+```
+
+**What extract-bag.py does:**
+1. **Pass 1**: Scans `/control_mode/feedback` across all bags to build mode timeline
+2. **Pass 2**: Extracts 14 other topics, tags every point with the active mode, writes to InfluxDB
+3. Writes 15 measurements, 8M+ points for a full mission (722 bag files, ~68 GB)
+
+See `concepts/rosbag-to-influxdb-extraction.md` for full details.
+
+### Option B: From CSV (Legacy)
 
 ```bash
 node write.js --mission mission-001 --type mission-segments --csv ./pm-data/mode-segments.csv
 ```
 
-### What write.js does
-
-1. Reads `data-types.json` to find the config for the given `--type`
-2. Reads the CSV file and parses the header to find column positions dynamically
-3. For each row, creates an InfluxDB data point with the configured tags and fields
-4. Always adds `mission` and `vessel` tags automatically
-5. Writes all points to the `vessel-data` bucket in InfluxDB
-
-### Adding a new data type
-
-Edit `data-types.json` — no code changes to `write.js` needed. See the README for details.
+Config-driven via `data-types.json`. See README for details.
 
 ### InfluxDB Data Model
 
-```
-Measurement: mission_segments
+Every data point has three standard tags:
+- **mission** → "rosbag-20260223" (separates data per mission)
+- **vessel** → "AUV_01"
+- **mode** → "Direct", "Idle", "Navigation", "Station", "Voyage" (active mode at that timestamp)
 
-Tags (for filtering/grouping):
-  - mission    → "mission-001", "mission-002", etc.
-  - mode       → "Direct", "Idle", "Navigation", "Station", "Voyage", "NO_BAG_RECORD"
-  - vessel     → "AUV_01" (default tag)
-
-Fields (actual values):
-  - duration_s      → float (duration in seconds)
-  - segment_number  → integer
-
-Timestamp: Start Time from CSV (millisecond precision)
-```
+This enables filtering ANY measurement by mode: `filter(fn: (r) => r.mode == "Navigation")`
 
 ### Tags vs Fields
 
@@ -121,36 +128,27 @@ Timestamp: Start Time from CSV (millisecond precision)
 4. Select your mission from the **Mission dropdown** (below dashboard title)
 5. Set the **time range** (top right) to cover your data dates (e.g., "Last 7d")
 
-### The Pie Chart Dashboard
+### The Mission Dashboard
 
-- Shows time distribution across operational modes for a selected mission
-- Each slice = one mode (Direct, Idle, Navigation, etc.)
-- Values shown in hours/minutes format (unit: seconds, auto-formatted by Grafana)
-- Percentages displayed on each slice
-- Legend on the right with mode names
+4 panels, auto-loaded from provisioning:
+1. **Battery consumption rate** — %/hour drain per mode (bar chart)
+2. **Total battery drop %** — discharge per mode (bar chart)
+3. **Mode distribution** — time in each mode (pie chart)
+4. **Mode transitions with battery level** — colored mode backgrounds with battery % line overlay
 
-## Step 5: Feed Power Consumption Data
-
-```bash
-node write.js --mission mission-001 --type power-consumption --csv "./pm-data/mission_time_report.xlsx - Power Consumption.csv"
-```
-
-This feeds the battery summary data (5 rows, one per mode). The bar charts in the dashboard
-will show total battery drop and consumption rate per mode.
-
-See `concepts/bar-charts.md` for detailed explanation of how bar charts work with summary data.
-
-## Step 6: Adding New Mission Data
-
-When you have a new CSV from a new mission:
+## Step 5: Adding New Mission Data
 
 ```bash
-node write.js --mission mission-002 --type mission-segments --csv /path/to/new-mission.csv
+# From ROS bags
+python3 extract-bag.py --mission mission-002 --bag-dir /path/to/new-bags/ --workers 8
+
+# Or from CSV
+node write.js --mission mission-002 --type mission-segments --csv /path/to/new-data.csv
 ```
 
 Then in Grafana:
 - The "Mission" dropdown automatically picks up the new mission
-- Select it → pie chart shows the new data
+- Select it → all panels update
 - Switch back to the old mission → old data still there
 
 No dashboard changes, no provisioning changes, no restarts needed.

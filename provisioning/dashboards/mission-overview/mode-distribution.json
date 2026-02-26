@@ -105,7 +105,7 @@
             "type": "influxdb",
             "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
           },
-          "query": "from(bucket: \"vessel-data\")                  \n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"power_consumption\")\n  |> filter(fn: (r) => r._field == \"rate_per_hour\")                                                                                                                                                         \n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> keep(columns: [\"mode\", \"_value\"])                                                                                                                                                                      \n  |> group()                                                                                                                                                                                                \n  |> rename(columns: {_value: \"Rate (%/hour)\"})",
+          "query": "drop = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"battery_telemetry\")\n  |> filter(fn: (r) => r._field == \"charge_percentage\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> difference(nonNegative: false)\n  |> map(fn: (r) => ({r with _value: r._value * -100.0}))\n  |> group(columns: [\"mode\"])\n  |> sum()\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> group()\n\nduration = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mission_segments\")\n  |> filter(fn: (r) => r._field == \"duration_s\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group(columns: [\"mode\"])\n  |> sum()\n  |> map(fn: (r) => ({r with _value: r._value / 3600.0}))\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> group()\n\njoin(tables: {drop: drop, duration: duration}, on: [\"mode\"])\n  |> map(fn: (r) => ({r with _value: r._value_drop / r._value_duration}))\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> rename(columns: {_value: \"Rate (%/hour)\"})",
           "refId": "A"
         }
       ],
@@ -196,7 +196,7 @@
             "type": "influxdb",
             "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
           },
-          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"power_consumption\")\n  |> filter(fn: (r) => r._field == \"total_battery_drop\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> group()\n  |> rename(columns: {_value: \"Battery Drop (%)\"})",
+          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"battery_telemetry\")\n  |> filter(fn: (r) => r._field == \"charge_percentage\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> difference(nonNegative: false)\n  |> map(fn: (r) => ({r with _value: r._value * -100.0}))\n  |> group(columns: [\"mode\"])\n  |> sum()\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> group()\n  |> rename(columns: {_value: \"Battery Drop (%)\"})",
           "refId": "A"
         }
       ],
@@ -233,9 +233,7 @@
       },
       "id": 1,
       "options": {
-        "displayLabels": [
-          "percent"
-        ],
+        "displayLabels": ["percent"],
         "legend": {
           "displayMode": "list",
           "placement": "right",
@@ -244,9 +242,7 @@
         },
         "pieType": "pie",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": true
         },
@@ -267,6 +263,583 @@
       ],
       "title": "Mode distribution",
       "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#B0B0B0"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "hidden",
+            "drawStyle": "line",
+            "fillOpacity": 50,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 0,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Battery %" },
+            "properties": [
+              { "id": "custom.drawStyle", "value": "line" },
+              { "id": "custom.lineInterpolation", "value": "smooth" },
+              { "id": "custom.lineWidth", "value": 3 },
+              { "id": "custom.fillOpacity", "value": 0 },
+              {
+                "id": "custom.stacking",
+                "value": { "group": "B", "mode": "none" }
+              },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.axisLabel", "value": "Battery (%)" },
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#0000CC" }
+              },
+              { "id": "unit", "value": "percent" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Direct" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#73BFF2" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Idle" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#B0B0B0" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Navigation" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#8F3BB8" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Station" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#C840E9" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Voyage" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#3274D9" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Mode" },
+            "properties": [
+              { "id": "custom.drawStyle", "value": "line" },
+              { "id": "custom.lineWidth", "value": 0 },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.showPoints", "value": "never" },
+              { "id": "custom.axisPlacement", "value": "hidden" },
+              {
+                "id": "custom.stacking",
+                "value": { "group": "B", "mode": "none" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": false, "legend": true, "viz": false }
+              },
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "transparent" }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": { "text": "Direct", "index": 0 },
+                      "2": { "text": "Idle", "index": 1 },
+                      "3": { "text": "Navigation", "index": 2 },
+                      "4": { "text": "Station", "index": 3 },
+                      "5": { "text": "Voyage", "index": 4 }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "data = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"battery_telemetry\")\n  |> filter(fn: (r) => r._field == \"charge_percentage\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> aggregateWindow(every: 2m, fn: last, createEmpty: false)\n\nunion(tables: [\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Direct\" then 100.0 else 0.0, _field: \"Direct\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Idle\" then 100.0 else 0.0, _field: \"Idle\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Navigation\" then 100.0 else 0.0, _field: \"Navigation\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Station\" then 100.0 else 0.0, _field: \"Station\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Voyage\" then 100.0 else 0.0, _field: \"Voyage\"})) |> group(columns: [\"_field\"])\n])",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"battery_telemetry\")\n  |> filter(fn: (r) => r._field == \"charge_percentage\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value * 100.0, _field: \"Battery %\"}))\n  |> group(columns: [\"_field\"])",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"battery_telemetry\")\n  |> filter(fn: (r) => r._field == \"charge_percentage\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> aggregateWindow(every: 2m, fn: last, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Direct\" then 1.0 else if r.mode == \"Idle\" then 2.0 else if r.mode == \"Navigation\" then 3.0 else if r.mode == \"Station\" then 4.0 else if r.mode == \"Voyage\" then 5.0 else 0.0, _field: \"Mode\"}))\n  |> group(columns: [\"_field\"])",
+          "refId": "C"
+        }
+      ],
+      "title": "Mode transitions with battery level",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#B0B0B0"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "hidden",
+            "drawStyle": "line",
+            "fillOpacity": 50,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 0,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Temperature" },
+            "properties": [
+              { "id": "custom.drawStyle", "value": "line" },
+              { "id": "custom.lineInterpolation", "value": "smooth" },
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "custom.fillOpacity", "value": 0 },
+              {
+                "id": "custom.stacking",
+                "value": { "group": "B", "mode": "none" }
+              },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.axisLabel", "value": "Temperature (\u00b0C)" },
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#FF6347" }
+              },
+              { "id": "unit", "value": "celsius" },
+              { "id": "min", "value": 20 },
+              { "id": "max", "value": 45 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Direct" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#73BFF2" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Idle" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#B0B0B0" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Navigation" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#8F3BB8" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Station" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#C840E9" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Voyage" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#3274D9" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "data = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"temperature\")\n  |> filter(fn: (r) => r._field == \"temperature_c\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> aggregateWindow(every: 2m, fn: last, createEmpty: false)\n\nunion(tables: [\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Direct\" then 100.0 else 0.0, _field: \"Direct\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Idle\" then 100.0 else 0.0, _field: \"Idle\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Navigation\" then 100.0 else 0.0, _field: \"Navigation\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Station\" then 100.0 else 0.0, _field: \"Station\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Voyage\" then 100.0 else 0.0, _field: \"Voyage\"})) |> group(columns: [\"_field\"])\n])",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"temperature\")\n  |> filter(fn: (r) => r._field == \"temperature_c\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Temperature\"}))\n  |> group(columns: [\"_field\"])",
+          "refId": "B"
+        }
+      ],
+      "title": "Temperature over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#B0B0B0"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "hidden",
+            "drawStyle": "line",
+            "fillOpacity": 50,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 0,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Humidity" },
+            "properties": [
+              { "id": "custom.drawStyle", "value": "line" },
+              { "id": "custom.lineInterpolation", "value": "smooth" },
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "custom.fillOpacity", "value": 0 },
+              {
+                "id": "custom.stacking",
+                "value": { "group": "B", "mode": "none" }
+              },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.axisLabel", "value": "Humidity (%)" },
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#4169E1" }
+              },
+              { "id": "unit", "value": "percent" },
+              { "id": "min", "value": 10 },
+              { "id": "max", "value": 40 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Direct" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#73BFF2" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Idle" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#B0B0B0" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Navigation" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#8F3BB8" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Station" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#C840E9" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Voyage" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#3274D9" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "data = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"humidity\")\n  |> filter(fn: (r) => r._field == \"relative_humidity\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> aggregateWindow(every: 2m, fn: last, createEmpty: false)\n\nunion(tables: [\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Direct\" then 100.0 else 0.0, _field: \"Direct\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Idle\" then 100.0 else 0.0, _field: \"Idle\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Navigation\" then 100.0 else 0.0, _field: \"Navigation\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Station\" then 100.0 else 0.0, _field: \"Station\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Voyage\" then 100.0 else 0.0, _field: \"Voyage\"})) |> group(columns: [\"_field\"])\n])",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"humidity\")\n  |> filter(fn: (r) => r._field == \"relative_humidity\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Humidity\"}))\n  |> group(columns: [\"_field\"])",
+          "refId": "B"
+        }
+      ],
+      "title": "Humidity over time",
+      "type": "timeseries"
     }
   ],
   "refresh": "",
@@ -305,6 +878,6 @@
   "timezone": "",
   "title": "Mission mode distribution",
   "uid": "b13d2a0c-4ab2-4a4d-8552-3531e2bc019b",
-  "version": 7,
+  "version": 100,
   "weekStart": ""
 }

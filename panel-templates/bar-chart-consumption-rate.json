@@ -1,0 +1,83 @@
+{
+  "_doc": "Reusable bar chart panel: shows battery consumption rate (%/hour) grouped by mode.",
+  "_usage": "Copy this panel into any dashboard. Uses a join of two sub-queries: 'drop' computes total battery discharge per mode (via difference + sum), 'duration' sums segment durations per mode from mission_segments. The join divides drop by hours to get rate. Replace bucket, measurements, fields, and mission filter.",
+  "datasource": {
+    "type": "influxdb",
+    "uid": "${DS_INFLUXDB}"
+  },
+  "fieldConfig": {
+    "defaults": {
+      "color": {
+        "mode": "continuous-GrYlRd"
+      },
+      "custom": {
+        "axisCenteredZero": false,
+        "axisColorMode": "text",
+        "axisLabel": "",
+        "axisPlacement": "auto",
+        "fillOpacity": 80,
+        "gradientMode": "none",
+        "hideFrom": {
+          "legend": false,
+          "tooltip": false,
+          "viz": false
+        },
+        "lineWidth": 1,
+        "scaleDistribution": {
+          "type": "linear"
+        },
+        "thresholdsStyle": {
+          "mode": "off"
+        }
+      },
+      "mappings": [],
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {"color": "green", "value": null},
+          {"color": "red", "value": 80}
+        ]
+      },
+      "unit": "short"
+    },
+    "overrides": []
+  },
+  "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 0
+  },
+  "options": {
+    "barRadius": 0,
+    "barWidth": 0.97,
+    "colorByField": "Rate (%/hour)",
+    "fullHighlight": false,
+    "groupWidth": 0.7,
+    "legend": {
+      "calcs": [],
+      "displayMode": "list",
+      "placement": "right",
+      "showLegend": true
+    },
+    "orientation": "auto",
+    "showValue": "always",
+    "stacking": "none",
+    "tooltip": {
+      "mode": "single",
+      "sort": "none"
+    },
+    "xField": "mode",
+    "xTickLabelRotation": 0,
+    "xTickLabelSpacing": 0
+  },
+  "targets": [
+    {
+      "_comment": "Joins battery drop (difference sum) with segment duration (mission_segments sum) to compute rate per mode. Replace bucket, measurements, fields, and mission filter.",
+      "query": "drop = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"battery_telemetry\")\n  |> filter(fn: (r) => r._field == \"charge_percentage\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> difference(nonNegative: false)\n  |> map(fn: (r) => ({r with _value: r._value * -100.0}))\n  |> group(columns: [\"mode\"])\n  |> sum()\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> group()\n\nduration = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mission_segments\")\n  |> filter(fn: (r) => r._field == \"duration_s\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group(columns: [\"mode\"])\n  |> sum()\n  |> map(fn: (r) => ({r with _value: r._value / 3600.0}))\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> group()\n\njoin(tables: {drop: drop, duration: duration}, on: [\"mode\"])\n  |> map(fn: (r) => ({r with _value: r._value_drop / r._value_duration}))\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> rename(columns: {_value: \"Rate (%/hour)\"})",
+      "refId": "A"
+    }
+  ],
+  "title": "Battery Consumption Rate",
+  "type": "barchart"
+}

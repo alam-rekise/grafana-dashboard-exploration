@@ -1,0 +1,139 @@
+{
+  "_doc": "Reusable combined panel: colored mode background blocks with a line series overlaid on top.",
+  "_usage": "Copy this panel into any dashboard. Two queries needed: Query A (refId A) outputs mode background series using union() — each mode is a separate _field with value 100 when active, 0 otherwise, stacked to form colored blocks. Query B (refId B) outputs the overlay line series (_field as label, _value as numeric). IMPORTANT: Query B map() must create clean records ({_time, _value, _field}) — do NOT use ({r with ...}) or metadata columns leak into the series name. Update 'overrides' to match your state names and colors. The overlay series name must match the override matcher (default: 'Battery %').",
+  "datasource": {
+    "type": "influxdb",
+    "uid": "${DS_INFLUXDB}"
+  },
+  "fieldConfig": {
+    "defaults": {
+      "color": {
+        "mode": "fixed",
+        "fixedColor": "#B0B0B0"
+      },
+      "custom": {
+        "axisCenteredZero": false,
+        "axisColorMode": "text",
+        "axisLabel": "",
+        "axisPlacement": "hidden",
+        "drawStyle": "line",
+        "fillOpacity": 50,
+        "gradientMode": "none",
+        "hideFrom": {
+          "legend": false,
+          "tooltip": false,
+          "viz": false
+        },
+        "lineInterpolation": "stepAfter",
+        "lineWidth": 0,
+        "pointSize": 5,
+        "scaleDistribution": {
+          "type": "linear"
+        },
+        "showPoints": "never",
+        "spanNulls": true,
+        "stacking": {
+          "group": "A",
+          "mode": "normal"
+        },
+        "thresholdsStyle": {
+          "mode": "off"
+        }
+      },
+      "mappings": [],
+      "min": 0,
+      "max": 100,
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {"color": "green", "value": null}
+        ]
+      }
+    },
+    "overrides": [
+      {
+        "_comment": "Overlay line series — change 'Battery %' to match your line series _field name",
+        "matcher": {"id": "byName", "options": "Battery %"},
+        "properties": [
+          {"id": "custom.drawStyle", "value": "line"},
+          {"id": "custom.lineInterpolation", "value": "smooth"},
+          {"id": "custom.lineWidth", "value": 3},
+          {"id": "custom.fillOpacity", "value": 0},
+          {"id": "custom.stacking", "value": {"group": "B", "mode": "none"}},
+          {"id": "custom.axisPlacement", "value": "right"},
+          {"id": "custom.axisLabel", "value": "Battery (%)"},
+          {"id": "color", "value": {"mode": "fixed", "fixedColor": "#0000CC"}},
+          {"id": "unit", "value": "percent"}
+        ]
+      },
+      {
+        "_comment": "One override per state — change names and colors to match your data. hideFrom.tooltip keeps these out of the tooltip.",
+        "matcher": {"id": "byName", "options": "Direct"},
+        "properties": [
+          {"id": "color", "value": {"mode": "fixed", "fixedColor": "#73BFF2"}},
+          {"id": "custom.hideFrom", "value": {"tooltip": true, "legend": false, "viz": false}}
+        ]
+      },
+      {
+        "matcher": {"id": "byName", "options": "Idle"},
+        "properties": [
+          {"id": "color", "value": {"mode": "fixed", "fixedColor": "#B0B0B0"}},
+          {"id": "custom.hideFrom", "value": {"tooltip": true, "legend": false, "viz": false}}
+        ]
+      },
+      {
+        "matcher": {"id": "byName", "options": "Navigation"},
+        "properties": [
+          {"id": "color", "value": {"mode": "fixed", "fixedColor": "#8F3BB8"}},
+          {"id": "custom.hideFrom", "value": {"tooltip": true, "legend": false, "viz": false}}
+        ]
+      },
+      {
+        "matcher": {"id": "byName", "options": "Station"},
+        "properties": [
+          {"id": "color", "value": {"mode": "fixed", "fixedColor": "#C840E9"}},
+          {"id": "custom.hideFrom", "value": {"tooltip": true, "legend": false, "viz": false}}
+        ]
+      },
+      {
+        "matcher": {"id": "byName", "options": "Voyage"},
+        "properties": [
+          {"id": "color", "value": {"mode": "fixed", "fixedColor": "#3274D9"}},
+          {"id": "custom.hideFrom", "value": {"tooltip": true, "legend": false, "viz": false}}
+        ]
+      }
+    ]
+  },
+  "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 0
+  },
+  "options": {
+    "legend": {
+      "calcs": [],
+      "displayMode": "list",
+      "placement": "right",
+      "showLegend": true
+    },
+    "tooltip": {
+      "mode": "single",
+      "sort": "none"
+    }
+  },
+  "targets": [
+    {
+      "_comment": "Query A: Mode backgrounds — one series per state, value 100 when active, 0 otherwise. Replace bucket, measurement, field, and mode tag names to match your data.",
+      "query": "data = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"battery_telemetry\")\n  |> filter(fn: (r) => r._field == \"charge_percentage\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> aggregateWindow(every: 2m, fn: last, createEmpty: false)\n\nunion(tables: [\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Direct\" then 100.0 else 0.0, _field: \"Direct\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Idle\" then 100.0 else 0.0, _field: \"Idle\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Navigation\" then 100.0 else 0.0, _field: \"Navigation\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Station\" then 100.0 else 0.0, _field: \"Station\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Voyage\" then 100.0 else 0.0, _field: \"Voyage\"})) |> group(columns: [\"_field\"])\n])",
+      "refId": "A"
+    },
+    {
+      "_comment": "Query B: Overlay line — replace with your numeric time series. IMPORTANT: use clean records in map() like ({_time: r._time, _value: ..., _field: ...}) to avoid metadata leaking into series name.",
+      "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"battery_telemetry\")\n  |> filter(fn: (r) => r._field == \"charge_percentage\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value * 100.0, _field: \"Battery %\"}))\n  |> group(columns: [\"_field\"])",
+      "refId": "B"
+    }
+  ],
+  "title": "Mode Transitions with Overlay",
+  "type": "timeseries"
+}

@@ -1,21 +1,24 @@
 # InfluxDB + Grafana Mission Data Visualization
 
-Automated pipeline for visualizing AUV mission data — feed a CSV, get interactive dashboards.
+**Status: Prototype** (see `concepts/project-status.md` for roadmap)
+
+Automated pipeline for visualizing AUV mission data — extract from ROS bags or CSV, get interactive dashboards.
 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
-npm install
-
-# 2. Start InfluxDB and Grafana
+# 1. Start InfluxDB and Grafana
 docker compose up -d
 
-# 3. Feed mission data (both types)
-node write.js --mission mission-001 --type mission-segments --csv "./pm-data/mission_time_report.xlsx - Mode Segments.csv"
-node write.js --mission mission-001 --type power-consumption --csv "./pm-data/mission_time_report.xlsx - Power Consumption.csv"
+# 2a. Feed from ROS bags (primary pipeline)
+pip3 install influxdb-client
+python3 extract-bag.py --mission rosbag-20260223 --bag-dir /path/to/rosbags/ --workers 8
 
-# 4. Open Grafana → http://localhost:3000 (admin/admin)
+# 2b. Or feed from CSV (legacy pipeline)
+npm install
+node write.js --mission mission-001 --type mission-segments --csv ./pm-data/mode-segments.csv
+
+# 3. Open Grafana → http://localhost:3000 (admin/admin)
 #    Dashboard is auto-loaded. Select mission from dropdown. Set time range to cover your data.
 ```
 
@@ -24,37 +27,53 @@ node write.js --mission mission-001 --type power-consumption --csv "./pm-data/mi
 ```
 influxWithGraphana/
 │
-├── scripts/
-│   └── reset-and-seed.sh          # Wipes InfluxDB data and re-feeds all CSVs for a mission
+├── extract-bag.py                  # ROS bag → InfluxDB (primary pipeline, Python)
+├── inspect-bag.py                  # Utility: inspect ROS bag contents and message types
+├── write.js                        # CSV → InfluxDB (legacy pipeline, Node.js)
+├── data-types.json                 # CSV column mappings for write.js
 ├── docker-compose.yml              # Defines InfluxDB + Grafana containers
-├── write.js                        # CSV → InfluxDB ingestion script (config-driven)
-├── data-types.json                 # Defines how each CSV type maps to InfluxDB (measurements, tags, fields)
 ├── package.json                    # Node.js dependencies (@influxdata/influxdb-client)
 │
-├── pm-data/                        # Mission CSV files (input data)
+├── scripts/
+│   └── reset-and-seed.sh          # Wipes InfluxDB data and re-feeds all CSVs for a mission
+│
+├── panel-templates/                # Reusable Grafana panel JSON templates
+│   ├── mode-timeline-with-overlay.json  # Mode blocks + line overlay (combined)
+│   ├── bar-chart-battery-drop.json      # Battery drop by mode
+│   ├── bar-chart-consumption-rate.json  # Consumption rate by mode
+│   ├── state-timeline.json              # Categorical state blocks
+│   └── time-series-line.json            # Generic line chart
+│
+├── pm-data/                        # Mission CSV files (legacy input data)
 │
 ├── provisioning/                   # Grafana auto-configuration (dashboards + datasources)
 │   ├── datasources/
-│   │   └── influxdb.yml            # InfluxDB connection config (auto-loaded on Grafana startup)
+│   │   └── influxdb.yml            # InfluxDB connection config
 │   └── dashboards/
-│       ├── provider.yml            # Tells Grafana to scan this directory for dashboard JSONs
-│       └── mission-overview/       # Folder name → becomes a folder in Grafana sidebar
-│           └── mode-distribution.json  # Dashboard: pie chart + bar charts (all panels)
+│       ├── provider.yml            # Dashboard provider config (auto-reload every 10s)
+│       └── mission-overview/       # Folder name → becomes Grafana folder
+│           └── mode-distribution.json  # Dashboard: 4 panels (pie, 2 bar, timeline)
 │
 ├── volumes/                        # Persistent data (bind-mounted into containers)
-│   ├── influxdb-data/              # InfluxDB database files (measurements, indexes)
+│   ├── influxdb-data/              # InfluxDB database files
 │   ├── influxdb-config/            # InfluxDB server configuration
-│   └── grafana-data/               # Grafana runtime state (user sessions, UI drafts)
+│   └── grafana-data/               # Grafana runtime state
 │
-└── concepts/                       # Documentation and learning notes
+├── benchmarking/                   # Extraction performance benchmarks
+│
+└── concepts/                       # Documentation
+    ├── project-status.md           # Current phase, roadmap, known limitations
     ├── project-setup-guide.md      # Step-by-step setup for new developers
-    ├── data-pipeline-flow.md       # End-to-end architecture: CSV → InfluxDB → Grafana
-    ├── docker-compose-explained.md # docker-compose.yml breakdown line by line
+    ├── data-pipeline-flow.md       # Architecture: ROS bag / CSV → InfluxDB → Grafana
+    ├── rosbag-to-influxdb-extraction.md  # extract-bag.py: two-pass approach, measurements, queries
+    ├── rosbag-field-mapping.md     # ROS topics → InfluxDB measurements mapping
+    ├── mode-timeline-panel.md      # Combined mode+battery panel implementation
+    ├── bar-charts.md               # Battery bar charts: difference() and join queries
+    ├── docker-compose-explained.md # docker-compose.yml breakdown
     ├── docker-volumes.md           # Volume types: anonymous, named, bind mounts
-    ├── grafana-provisioning.md     # How Grafana auto-loads datasources and dashboards
+    ├── grafana-provisioning.md     # How Grafana auto-loads config from files
     ├── grafana-template-variables.md # Time picker vs template variable dropdowns
-    ├── influxdb-basics.md          # Buckets, measurements, tags vs fields, Flux queries
-    └── bar-charts.md               # Bar chart implementation: battery data, summary data handling
+    └── influxdb-basics.md          # Buckets, measurements, tags vs fields, Flux queries
 ```
 
 ## File Descriptions
@@ -63,114 +82,91 @@ influxWithGraphana/
 
 | File | Purpose |
 | ---- | ------- |
+| `extract-bag.py` | **Primary pipeline.** Reads ROS2 .db3 bag files and writes 15 measurements to InfluxDB. Two-pass: builds mode timeline, then extracts all sensor data with mode tags. Supports parallel processing. |
+| `inspect-bag.py` | Utility for inspecting ROS bag contents — lists topics, message types, message counts, and sample field values. |
 | `docker-compose.yml` | Runs InfluxDB (port 8086) and Grafana (port 3000) on a shared Docker network. Uses bind mounts for persistent storage and provisioning. |
-| `write.js` | Config-driven CSV ingestion script. Reads `data-types.json` to understand how to parse any CSV format. Usage: `node write.js --mission <name> --type <type> --csv <path>` |
-| `data-types.json` | Defines all supported data types. Each entry maps CSV column names to InfluxDB measurements, tags, and fields. Add new entries here to support new CSV formats — no code changes needed. |
-| `package.json` | Declares the `@influxdata/influxdb-client` dependency for writing data to InfluxDB from Node.js. |
+| `write.js` | Legacy CSV ingestion script. Config-driven via `data-types.json`. Usage: `node write.js --mission <name> --type <type> --csv <path>` |
+| `data-types.json` | Defines CSV column → InfluxDB mappings for write.js. Add new entries to support new CSV formats. |
 
 ### Provisioning Files
 
-These files are auto-loaded by Grafana on startup — no manual UI setup needed.
+Auto-loaded by Grafana on startup — no manual UI setup needed.
 
 | File | Purpose |
 | ---- | ------- |
-| `provisioning/datasources/influxdb.yml` | Configures the InfluxDB datasource in Grafana (URL, token, org, bucket). Uses Flux query language. Grafana connects to InfluxDB via Docker network at `http://influxdb:8086`. |
-| `provisioning/dashboards/provider.yml` | Tells Grafana to scan for JSON dashboard files in this directory. `foldersFromFilesStructure: true` means subdirectory names become Grafana folders. |
-| `provisioning/dashboards/mission-overview/mode-distribution.json` | Dashboard with 3 panels: pie chart (mode time distribution), bar chart (total battery drop by mode), bar chart (battery consumption rate by mode). All share a "Mission" dropdown variable for filtering. |
+| `provisioning/datasources/influxdb.yml` | InfluxDB datasource config (URL, token, org, bucket). Grafana connects via Docker network at `http://influxdb:8086`. |
+| `provisioning/dashboards/provider.yml` | Dashboard provider config. Auto-reloads every 10s. `foldersFromFilesStructure: true` maps subdirectories to Grafana folders. |
+| `provisioning/dashboards/mission-overview/mode-distribution.json` | Dashboard with 4 panels: mode distribution (pie), total battery drop (bar), consumption rate (bar), mode timeline with battery level (time series). |
 
-### Data Directories
+### Panel Templates
 
-| Directory | Purpose |
-| --------- | ------- |
-| `pm-data/` | Place mission CSV files here. Any CSV format is supported as long as it has a matching entry in `data-types.json`. |
-| `volumes/influxdb-data/` | InfluxDB database storage. Contains the actual time-series data. Persists across container restarts. |
-| `volumes/influxdb-config/` | InfluxDB server configuration files. |
-| `volumes/grafana-data/` | Grafana runtime state — user sessions, draft dashboards, alerting config. Not critical (provisioning recreates dashboards). |
+Reusable panel configs in `panel-templates/`. Copy into any dashboard and update queries.
+
+| File | Purpose |
+| ---- | ------- |
+| `mode-timeline-with-overlay.json` | Colored mode backgrounds with numeric line overlaid (combined time series panel) |
+| `bar-chart-battery-drop.json` | Total battery drop by mode (difference query) |
+| `bar-chart-consumption-rate.json` | Battery consumption rate %/hour (join query) |
+| `state-timeline.json` | Categorical state timeline (colored blocks) |
+| `time-series-line.json` | Generic time series line chart |
 
 ### Concepts (Documentation)
 
 | File | What It Covers |
 | ---- | -------------- |
-| `concepts/project-setup-guide.md` | Full walkthrough for new developers: prerequisites, setup, feeding data, viewing dashboards, troubleshooting. |
-| `concepts/data-pipeline-flow.md` | Architecture diagram: how data flows from CSV → write.js → InfluxDB → Grafana. Network topology. What lives where. |
-| `concepts/docker-compose-explained.md` | Line-by-line explanation of docker-compose.yml: services, ports, volumes, networks. Why Grafana uses `http://influxdb:8086` not localhost. |
-| `concepts/docker-volumes.md` | Docker storage: anonymous vs named volumes vs bind mounts. What happens on container removal. |
-| `concepts/grafana-provisioning.md` | How Grafana auto-loads config from files. Provisioning vs volumes. Workflow for exporting dashboards. |
-| `concepts/grafana-template-variables.md` | Time picker vs template variables. How the Mission dropdown works. How variables are stored in JSON. |
-| `concepts/influxdb-basics.md` | InfluxDB concepts: buckets, measurements, tags vs fields, Flux queries, writing data with Node.js. |
-| `concepts/bar-charts.md` | How the battery bar charts work: summary data vs time-series, why timestamps don't affect bar rendering, data-types.json config, Flux queries, how to modify. |
+| `project-status.md` | **Start here.** Current phase (prototype), roadmap to MVP and production, known limitations. |
+| `project-setup-guide.md` | Step-by-step setup: prerequisites, Docker, feeding data, viewing dashboards, troubleshooting. |
+| `data-pipeline-flow.md` | Architecture: ROS bag and CSV pipelines → InfluxDB → Grafana. Network topology. File locations. |
+| `rosbag-to-influxdb-extraction.md` | extract-bag.py deep dive: two-pass approach, custom message types, all 15 measurements, Grafana queries. |
+| `rosbag-field-mapping.md` | ROS topics → dashboard requirements mapping. Which topics feed which charts. |
+| `mode-timeline-panel.md` | Combined mode+battery panel: stacked area trick, query structure, color scheme, tooltip limitations. |
+| `bar-charts.md` | Battery bar charts: why difference() not first-to-last, why join not reduce, mid-mission charging. |
+| `docker-compose-explained.md` | docker-compose.yml breakdown: services, ports, volumes, networks. |
+| `docker-volumes.md` | Docker storage: anonymous vs named volumes vs bind mounts. |
+| `grafana-provisioning.md` | How Grafana auto-loads config. Current provisioned dashboards. Workflow for editing. |
+| `grafana-template-variables.md` | Time picker vs template variables. Mission dropdown implementation. |
+| `influxdb-basics.md` | Buckets, measurements, tags vs fields, Flux queries. |
 
 ## Feeding Data
 
-### Usage
+### Pipeline 1: ROS Bag Extraction (Primary)
 
 ```bash
+# Prerequisites
+pip3 install influxdb-client
+
+# Single bag file
+python3 extract-bag.py --mission rosbag-20260223 --bag /path/to/file.db3
+
+# Entire directory (parallel)
+python3 extract-bag.py --mission rosbag-20260223 --bag-dir /path/to/rosbags/ --workers 8
+
+# Dry run (process without writing to InfluxDB)
+python3 extract-bag.py --mission test --bag /path/to/file.db3 --dry-run
+
+# Force re-process (ignore tracking)
+python3 extract-bag.py --mission rosbag-20260223 --bag-dir /path/to/rosbags/ --force --workers 8
+```
+
+Writes 15 measurements to InfluxDB. Every point tagged with `mission`, `vessel`, and `mode`.
+See `concepts/rosbag-to-influxdb-extraction.md` for details.
+
+### Pipeline 2: CSV Ingestion (Legacy)
+
+```bash
+npm install
 node write.js --mission <mission-name> --type <data-type> --csv <path-to-csv>
 ```
 
-### Available Data Types
-
-Run `node write.js` with no arguments to see all available types.
-
-Currently defined in `data-types.json`:
+Config-driven via `data-types.json`. Available types:
 
 | Type | Measurement | Description |
 | ---- | ----------- | ----------- |
-| `mission-segments` | `mission_segments` | Mode segments (Direct, Idle, Navigation, etc.) with duration. Time-series data. |
-| `power-consumption` | `power_consumption` | Battery stats per mode (total drop, rate, duration). Summary data — no timestamps. |
-| `navigation` | `navigation` | GPS/navigation data (latitude, longitude, heading, speed). Placeholder for future use. |
+| `mission-segments` | `mission_segments` | Mode segments with duration |
+| `power-consumption` | `power_consumption` | Battery stats per mode (summary) |
+| `navigation` | `navigation` | GPS/navigation data (placeholder) |
 
-### Examples
-
-```bash
-# Feed mission mode segments
-node write.js --mission mission-001 --type mission-segments --csv "./pm-data/mission_time_report.xlsx - Mode Segments.csv"
-
-# Feed power consumption summary
-node write.js --mission mission-001 --type power-consumption --csv "./pm-data/mission_time_report.xlsx - Power Consumption.csv"
-
-# All data types share the same mission tag, so Grafana can filter by mission across all charts
-```
-
-### Adding a New Data Type
-
-Edit `data-types.json` and add a new entry:
-
-```json
-{
-  "depth-telemetry": {
-    "measurement": "depth_telemetry",
-    "timestamp_column": "Timestamp",
-    "tags": {},
-    "fields": {
-      "depth": { "column": "Depth (m)", "type": "float" },
-      "pressure": { "column": "Pressure (bar)", "type": "float" },
-      "temperature": { "column": "Temp (C)", "type": "float" }
-    }
-  }
-}
-```
-
-Then feed it:
-
-```bash
-node write.js --mission mission-001 --type depth-telemetry --csv ./pm-data/depth.csv
-```
-
-No code changes to `write.js` needed. The config drives everything.
-
-### How data-types.json Works
-
-Each entry defines:
-
-| Key | Purpose |
-| --- | ------- |
-| `measurement` | InfluxDB measurement name (like a table name) |
-| `timestamp_column` | Which CSV column contains the timestamp |
-| `tags` | CSV columns to use as InfluxDB tags (indexed, for filtering). Format: `{ "tag_name": "CSV Column Name" }` |
-| `fields` | CSV columns to use as InfluxDB fields (values, for math). Format: `{ "field_name": { "column": "CSV Column Name", "type": "int\|float\|string" } }` |
-
-The `mission` and `vessel` tags are always added automatically — you don't need to define them.
+Edit `data-types.json` to add new CSV types — no code changes to `write.js` needed.
 
 ## Adding New Dashboards
 

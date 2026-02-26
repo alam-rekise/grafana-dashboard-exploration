@@ -1,0 +1,72 @@
+{
+  "_doc": "Reusable State Timeline panel. Shows colored blocks for categorical states over time.",
+  "_usage": "Copy this panel into any dashboard. Replace the 'query' field with your Flux query. Query must return: _time (timestamp), _value (state name string), _field (series name). Update 'mappings' to match your state values and colors.",
+  "datasource": {
+    "type": "influxdb",
+    "uid": "${DS_INFLUXDB}"
+  },
+  "fieldConfig": {
+    "defaults": {
+      "color": {
+        "mode": "fixed",
+        "fixedColor": "transparent"
+      },
+      "custom": {
+        "fillOpacity": 80,
+        "lineWidth": 0
+      },
+      "mappings": [
+        {
+          "type": "value",
+          "options": {
+            "Direct": {"color": "#73BFF2", "index": 0, "text": "Direct"},
+            "Idle": {"color": "#B0B0B0", "index": 1, "text": "Idle"},
+            "Station": {"color": "#C840E9", "index": 2, "text": "Station"},
+            "Navigation": {"color": "#8F3BB8", "index": 3, "text": "Navigation"},
+            "Voyage": {"color": "#3274D9", "index": 4, "text": "Voyage"}
+          }
+        }
+      ],
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {"color": "transparent", "value": null}
+        ]
+      }
+    },
+    "overrides": []
+  },
+  "gridPos": {
+    "h": 4,
+    "w": 24,
+    "x": 0,
+    "y": 0
+  },
+  "options": {
+    "alignValue": "left",
+    "legend": {
+      "displayMode": "list",
+      "placement": "right",
+      "showLegend": true
+    },
+    "mergeValues": true,
+    "rowHeight": 0.9,
+    "showValue": "never",
+    "tooltip": {
+      "mode": "single",
+      "sort": "none"
+    }
+  },
+  "targets": [
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "query": "// REPLACE: your Flux query here\n// Must output: _time, _value (state name), _field (series label)\n//\n// Example: mode segments from mission data\nfrom(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mission_segments\")\n  |> filter(fn: (r) => r._field == \"duration_s\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> keep(columns: [\"_time\", \"mode\"])\n  |> map(fn: (r) => ({_time: r._time, _value: r.mode, _field: \"mode\"}))\n  |> group(columns: [\"_field\"])\n  |> sort(columns: [\"_time\"])",
+      "refId": "A"
+    }
+  ],
+  "title": "State Timeline",
+  "type": "state-timeline"
+}

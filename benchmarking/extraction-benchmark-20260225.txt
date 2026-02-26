@@ -1,0 +1,209 @@
+============================================================
+  ROS Bag → InfluxDB Extraction Benchmark
+  Date: 2026-02-25
+  Script: extract-bag.py
+  Mission: rosbag-20260223
+============================================================
+
+═══════════════════════════════════════════════════════════
+  RUN 1: Sequential — 286 files (first batch)
+═══════════════════════════════════════════════════════════
+
+INPUT
+  Bag files:       286
+  Total size:      32,898 MB (33 GB)
+  Source dir:      /home/alam/post-mission-analysis/rosbags/
+  File pattern:    20260223_050019_0.db3 → 20260223_050019_285.db3
+  Recording duration: ~9.5 hours (ROS2 split bags, ~120s each)
+
+OUTPUT
+  InfluxDB bucket: vessel-data
+  Total points:    3,120,083
+  Measurements:    15
+
+TIMING
+  Pass 1 (mode timeline scan):  220s (3.7 min)
+  Pass 2 (extract + write):    375s (6.3 min)
+  Total:                        595s (9.9 min)
+
+  Throughput:
+    Files/sec:          0.48
+    Points/sec:         5,244
+    MB/sec (input):     55.3
+
+PER-FILE STATS (Pass 2)
+  Processing time:
+    Min:   0.8s
+    Max:   2.4s
+    Avg:   1.31s
+  Points per file:
+    Min:   3,737
+    Max:   11,529
+    Avg:   10,909
+
+
+═══════════════════════════════════════════════════════════
+  RUN 2: Sequential — 722 files (full dataset)
+═══════════════════════════════════════════════════════════
+
+INPUT
+  Bag files:       722
+  Total size:      ~68,000 MB (68 GB)
+  Source dir:      /home/alam/post-mission-analysis/rosbags/
+  Sessions:        3 recording sessions
+    20260223_050019_*.db3  (files 0-285)
+    20260223_143126_*.db3  (additional session)
+    20260223_174208_*.db3  (files 0-339)
+  Workers:         1 (sequential)
+
+OUTPUT
+  InfluxDB bucket: vessel-data
+  Total points:    8,125,985
+  Measurements:    15
+
+TIMING
+  Total:                        1,420s (23.7 min)
+
+  Throughput:
+    Files/sec:          0.51
+    Points/sec:         5,722
+    MB/sec (input):     47.9
+
+PER-FILE STATS (Pass 2)
+  Points per file:
+    Avg:   ~11,254
+
+
+═══════════════════════════════════════════════════════════
+  RUN 3: Parallel — 722 files (8 workers)
+═══════════════════════════════════════════════════════════
+
+INPUT
+  Bag files:       722
+  Total size:      ~68,000 MB (68 GB)
+  Source dir:      /home/alam/post-mission-analysis/rosbags/
+  Workers:         8 (multiprocessing.Pool)
+  CPU cores:       16
+
+OUTPUT
+  InfluxDB bucket: vessel-data
+  Total points:    8,125,985
+  Measurements:    15
+
+TIMING
+  Total:                        693s (11.5 min)
+  vs Sequential (Run 2):       1,420s (23.7 min)
+  Speedup:                      2.05x
+
+  Throughput:
+    Files/sec:          1.04
+    Points/sec:         11,726
+    MB/sec (input):     98.1
+
+PER-FILE STATS (Pass 2, parallel)
+  Processing time:
+    Min:   0.2s  (partial file, 746 points)
+    Max:   2.4s
+    Avg:   ~1.6s (includes InfluxDB write contention)
+
+═══════════════════════════════════════════════════════════
+  RUN 4: Parallel — 722 files (8 workers, fixed mode topic)
+═══════════════════════════════════════════════════════════
+
+INPUT
+  Bag files:       722
+  Total size:      ~68,000 MB (68 GB)
+  Source dir:      /home/alam/post-mission-analysis/rosbags/
+  Workers:         8 (multiprocessing.Pool)
+  CPU cores:       16
+  Mode topic:      /control_mode/feedback (ControlModeFeedback)
+                   — fixed from /control_mode/status (was wrong, always Idle)
+
+OUTPUT
+  InfluxDB bucket: vessel-data
+  Total points:    8,126,289
+  Measurements:    15
+  Mode segments:   305 (was 1 with old topic)
+
+TIMING
+  Pass 1 (mode timeline scan):  ~425s (7.1 min) — 411 feedback msgs
+  Pass 2 (extract + write):    ~156s (2.6 min) — 8 workers
+  Total:                        581s (9.7 min)
+
+  Throughput:
+    Files/sec:          1.24
+    Points/sec:         13,987
+    MB/sec (input):     119.6
+
+COMPARISON (all runs)
+  Run         Files  Workers  Mode Topic         Segments  Total Time  Points/sec
+  ─────────────────────────────────────────────────────────────────────────────────
+  Run 1        286      1     /control_mode/status      1    595s        5,244
+  Run 2        722      1     /control_mode/status      1   1420s        5,722
+  Run 3        722      8     /control_mode/status      1    693s       11,726
+  Run 4        722      8     /control_mode/feedback  305    581s       13,987
+
+  Notes:
+  - Run 1-3 used /control_mode/status which always reported "Idle" —
+    all sensor points had wrong mode tags.
+  - Run 4 uses /control_mode/feedback with current_mode_name field,
+    matching the mission_time_analysis package output exactly.
+  - Pass 1 scans 411 feedback msgs (vs 171K+ status msgs), but still
+    opens all 722 files sequentially to check for the topic.
+  - Pass 2 speedup with 8 workers: ~156s vs ~870s sequential (5.6x).
+
+
+POINTS BY MEASUREMENT (Run 4, full 722-file dataset)
+  Measurement          Points      Source Topic
+  ─────────────────────────────────────────────────────
+  power_mgmt           2,355,438   /pm/feedback
+  odometry             1,702,975   /odometry/filtered
+  ekf_euler            1,651,923   /imu/ellipse/sbg_ekf_euler
+  telemetry_state        863,865   /telemetry/state
+  navheading             418,016   /moving_base_second/navheading
+  gnss                   417,749   /gnss/fix
+  temperature            178,601   /temperature
+  humidity               178,601   /humidity
+  pressure                89,297   /pressure
+  battery_telemetry       86,387   /telemetry/battery_state
+  leak_detect             84,616   /leak_detect
+  battery_state           49,249   /battery_state
+  pack_status             49,244   /pack_status
+  vessel_mode                 23   /vessel/mode
+  mission_segments            305   /control_mode/feedback (derived)
+
+MODE TIMELINE (Run 4)
+  Total feedback messages:  411
+  Mode segments found:      305
+  Modes:
+    Navigation:  60 segments  (347.3 min, 39.3%)
+    Idle:        59 segments  (345.3 min, 39.0%)
+    Direct:      81 segments  (100.2 min, 11.3%)
+    Station:     73 segments  ( 71.0 min,  8.0%)
+    Voyage:      32 segments  ( 20.6 min,  2.3%)
+  Total mission duration:    884.3 min (14.7 hours)
+
+SYSTEM
+  Machine:    Linux 6.8.0-100-generic
+  Python:     3.10
+  rosbags:    0.11.0
+  influxdb-client: 1.50.0
+  InfluxDB:   2.7 (Docker)
+  Write mode: SYNCHRONOUS
+  Batch size: 5,000 points
+
+NOTES
+  - Pass 1 reads ALL files sequentially to build a complete mode
+    timeline before Pass 2 begins. This ensures every sensor reading
+    gets the correct mode tag even if mode changes span multiple files.
+  - The duplicate issue (re-seeding same file) is handled by InfluxDB's
+    upsert behavior: same measurement + tags + timestamp = overwrite.
+  - Parallel processing uses Python multiprocessing.Pool — each worker
+    gets its own typestore, InfluxDB client, and mode timeline copy.
+  - Pass 1 remains sequential (must read all files to build complete
+    mode timeline before any sensor processing begins).
+  - /control_mode/feedback only publishes on mode CHANGE (not continuously),
+    so only 411 messages across 722 files. Much lighter than /control_mode/status
+    which had 171K+ messages but always reported "Idle".
+  - Old data was deleted from InfluxDB before Run 4 re-seed:
+    delete_api.delete(predicate='mission="rosbag-20260223"')

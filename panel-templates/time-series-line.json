@@ -1,0 +1,87 @@
+{
+  "_doc": "Reusable Time Series line panel. Shows a smooth line chart with Y-axis on the right.",
+  "_usage": "Copy this panel into any dashboard. Replace the 'query' field with your Flux query. Query must return: _time (timestamp), _value (numeric), _field (series label). Update 'unit', 'min', 'max', 'axisLabel', and 'fixedColor' as needed.",
+  "datasource": {
+    "type": "influxdb",
+    "uid": "${DS_INFLUXDB}"
+  },
+  "fieldConfig": {
+    "defaults": {
+      "color": {
+        "mode": "fixed",
+        "fixedColor": "#1F60C4"
+      },
+      "custom": {
+        "axisCenteredZero": false,
+        "axisColorMode": "text",
+        "axisLabel": "Battery (%)",
+        "axisPlacement": "right",
+        "barAlignment": 0,
+        "drawStyle": "line",
+        "fillOpacity": 10,
+        "gradientMode": "none",
+        "hideFrom": {
+          "legend": false,
+          "tooltip": false,
+          "viz": false
+        },
+        "lineInterpolation": "smooth",
+        "lineWidth": 2,
+        "pointSize": 5,
+        "scaleDistribution": {
+          "type": "linear"
+        },
+        "showPoints": "never",
+        "spanNulls": true,
+        "stacking": {
+          "group": "A",
+          "mode": "none"
+        },
+        "thresholdsStyle": {
+          "mode": "off"
+        }
+      },
+      "mappings": [],
+      "min": 0,
+      "max": 100,
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {"color": "green", "value": null}
+        ]
+      },
+      "unit": "percent"
+    },
+    "overrides": []
+  },
+  "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 0
+  },
+  "options": {
+    "legend": {
+      "calcs": [],
+      "displayMode": "list",
+      "placement": "right",
+      "showLegend": true
+    },
+    "tooltip": {
+      "mode": "single",
+      "sort": "none"
+    }
+  },
+  "targets": [
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "query": "// REPLACE: your Flux query here\n// Must output: _time, _value (numeric), _field (series label)\n//\n// Example: battery percentage over time\nfrom(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"battery_telemetry\")\n  |> filter(fn: (r) => r._field == \"charge_percentage\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({r with _value: r._value * 100.0, _field: \"Battery %\"}))",
+      "refId": "A"
+    }
+  ],
+  "title": "Time Series Line",
+  "type": "timeseries"
+}
