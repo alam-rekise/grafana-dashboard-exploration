@@ -35,7 +35,22 @@ The `volumes/` directory (InfluxDB data) is **not** checked into git — it cont
 - Python 3 with `influxdb-client` and `rosbags` packages
 - Access to ROS bag files (.db3 format)
 
-### First-Time Setup
+### Option A: Quick Start with Pre-Seeded Data (Recommended)
+
+If you have the `volumes-backup.tar.gz` file (shared via drive), you can skip the extraction entirely:
+
+```bash
+git clone git@github.com:alam-rekise/grafana-dashboard-exploration.git
+cd grafana-dashboard-exploration
+tar -xzf /path/to/volumes-backup.tar.gz
+docker compose up -d
+# Open Grafana → http://localhost:3000 (admin/admin)
+# Dashboard + data ready immediately. Select mission from dropdown.
+```
+
+### Option B: Seed from ROS Bag Files
+
+If you have access to the ROS bag files and want to extract from scratch:
 
 1. Start the containers: `docker compose up -d`
 2. Open InfluxDB at http://localhost:8086 and complete the onboarding wizard:
