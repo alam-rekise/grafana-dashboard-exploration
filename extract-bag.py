@@ -238,6 +238,18 @@ def build_mode_timeline(bag_files):
 
 
 # ====================================================================
+# Helpers
+# ====================================================================
+def quaternion_to_heading_degrees(x, y, z, w):
+    """Convert quaternion orientation to heading in degrees (0-360)."""
+    yaw_rad = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    heading_deg = math.degrees(yaw_rad)
+    if heading_deg < 0:
+        heading_deg += 360.0
+    return heading_deg
+
+
+# ====================================================================
 # Topic Processors — one per topic, returns (fields_dict, extra_tags_dict)
 # ====================================================================
 def process_battery_state(msg):
@@ -287,14 +299,16 @@ def process_odometry(msg):
 
 
 def process_navheading(msg):
+    x, y, z, w = float(msg.orientation.x), float(msg.orientation.y), float(msg.orientation.z), float(msg.orientation.w)
     fields = {
-        "orientation_x": float(msg.orientation.x),
-        "orientation_y": float(msg.orientation.y),
-        "orientation_z": float(msg.orientation.z),
-        "orientation_w": float(msg.orientation.w),
+        "orientation_x": x,
+        "orientation_y": y,
+        "orientation_z": z,
+        "orientation_w": w,
         "angular_velocity_x": float(msg.angular_velocity.x),
         "angular_velocity_y": float(msg.angular_velocity.y),
         "angular_velocity_z": float(msg.angular_velocity.z),
+        "heading_degrees": quaternion_to_heading_degrees(x, y, z, w),
     }
     return fields, {}
 
@@ -394,15 +408,35 @@ def process_power_mgmt(msg):
     return fields, extra_tags
 
 
+def process_ahrs8(msg):
+    x, y, z, w = float(msg.orientation.x), float(msg.orientation.y), float(msg.orientation.z), float(msg.orientation.w)
+    fields = {
+        "orientation_x": x,
+        "orientation_y": y,
+        "orientation_z": z,
+        "orientation_w": w,
+        "angular_velocity_x": float(msg.angular_velocity.x),
+        "angular_velocity_y": float(msg.angular_velocity.y),
+        "angular_velocity_z": float(msg.angular_velocity.z),
+        "heading_degrees": quaternion_to_heading_degrees(x, y, z, w),
+    }
+    return fields, {}
+
+
 def process_leak_detect(msg):
     return {"status": int(msg.data)}, {}
 
 
 def process_ekf_euler(msg):
+    yaw_rad = float(msg.angle.z)
+    heading_deg = math.degrees(yaw_rad)
+    if heading_deg < 0:
+        heading_deg += 360.0
     fields = {
         "roll": float(msg.angle.x),
         "pitch": float(msg.angle.y),
-        "yaw": float(msg.angle.z),
+        "yaw": yaw_rad,
+        "heading_degrees": heading_deg,
         "accuracy_roll": float(msg.accuracy.x),
         "accuracy_pitch": float(msg.accuracy.y),
         "accuracy_yaw": float(msg.accuracy.z),
@@ -445,6 +479,7 @@ TOPIC_PROCESSORS = {
     "/pm/feedback":                   ("power_mgmt",        process_power_mgmt),
     "/leak_detect":                   ("leak_detect",       process_leak_detect),
     "/imu/ellipse/sbg_ekf_euler":     ("ekf_euler",         process_ekf_euler),
+    "/imu/ahrs8/data":                ("ahrs8",             process_ahrs8),
 }
 
 

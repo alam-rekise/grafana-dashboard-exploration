@@ -840,6 +840,434 @@
       ],
       "title": "Humidity over time",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#B0B0B0"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "hidden",
+            "drawStyle": "line",
+            "fillOpacity": 50,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 0,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "SBG Ellipse" },
+            "properties": [
+              { "id": "custom.drawStyle", "value": "line" },
+              { "id": "custom.lineInterpolation", "value": "smooth" },
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "custom.fillOpacity", "value": 0 },
+              {
+                "id": "custom.stacking",
+                "value": { "group": "B", "mode": "none" }
+              },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.axisLabel", "value": "Heading (degrees)" },
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#FF6347" }
+              },
+              { "id": "unit", "value": "degree" },
+              { "id": "min", "value": 0 },
+              { "id": "max", "value": 360 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "AHRS8" },
+            "properties": [
+              { "id": "custom.drawStyle", "value": "line" },
+              { "id": "custom.lineInterpolation", "value": "smooth" },
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "custom.fillOpacity", "value": 0 },
+              {
+                "id": "custom.stacking",
+                "value": { "group": "B", "mode": "none" }
+              },
+              { "id": "custom.axisPlacement", "value": "hidden" },
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#4169E1" }
+              },
+              { "id": "unit", "value": "degree" },
+              { "id": "min", "value": 0 },
+              { "id": "max", "value": 360 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "GNSS Heading" },
+            "properties": [
+              { "id": "custom.drawStyle", "value": "line" },
+              { "id": "custom.lineInterpolation", "value": "smooth" },
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "custom.fillOpacity", "value": 0 },
+              {
+                "id": "custom.stacking",
+                "value": { "group": "B", "mode": "none" }
+              },
+              { "id": "custom.axisPlacement", "value": "hidden" },
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#56A64B" }
+              },
+              { "id": "unit", "value": "degree" },
+              { "id": "min", "value": 0 },
+              { "id": "max", "value": 360 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Direct" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#73BFF2" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Idle" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#B0B0B0" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Navigation" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#8F3BB8" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Station" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#C840E9" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Voyage" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#3274D9" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "data = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"ekf_euler\")\n  |> filter(fn: (r) => r._field == \"heading_degrees\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> aggregateWindow(every: 2m, fn: last, createEmpty: false)\n\nunion(tables: [\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Direct\" then 100.0 else 0.0, _field: \"Direct\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Idle\" then 100.0 else 0.0, _field: \"Idle\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Navigation\" then 100.0 else 0.0, _field: \"Navigation\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Station\" then 100.0 else 0.0, _field: \"Station\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Voyage\" then 100.0 else 0.0, _field: \"Voyage\"})) |> group(columns: [\"_field\"])\n])",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"ekf_euler\")\n  |> filter(fn: (r) => r._field == \"heading_degrees\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"SBG Ellipse\"}))\n  |> group(columns: [\"_field\"])",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"ahrs8\")\n  |> filter(fn: (r) => r._field == \"heading_degrees\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"AHRS8\"}))\n  |> group(columns: [\"_field\"])",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"navheading\")\n  |> filter(fn: (r) => r._field == \"heading_degrees\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"GNSS Heading\"}))\n  |> group(columns: [\"_field\"])",
+          "refId": "D"
+        }
+      ],
+      "title": "Heading comparison",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#B0B0B0"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "hidden",
+            "drawStyle": "line",
+            "fillOpacity": 50,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 0,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "No Leak" },
+            "properties": [
+              { "id": "custom.drawStyle", "value": "line" },
+              { "id": "custom.lineInterpolation", "value": "stepAfter" },
+              { "id": "custom.lineWidth", "value": 3 },
+              { "id": "custom.fillOpacity", "value": 0 },
+              {
+                "id": "custom.stacking",
+                "value": { "group": "B", "mode": "none" }
+              },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.axisLabel", "value": "Leak Code" },
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#56A64B" }
+              },
+              { "id": "min", "value": 0 },
+              { "id": "max", "value": 3 },
+              { "id": "decimals", "value": 0 },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": { "text": "None (0)", "index": 0 },
+                      "1": { "text": "Sensor A - Back (1)", "index": 1 },
+                      "2": { "text": "Sensor B - Front (2)", "index": 2 },
+                      "3": { "text": "Both (3)", "index": 3 }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Direct" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#73BFF2" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Idle" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#B0B0B0" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Navigation" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#8F3BB8" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Station" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#C840E9" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Voyage" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "#3274D9" }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": { "tooltip": true, "legend": false, "viz": false }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 64
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "data = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"leak_detect\")\n  |> filter(fn: (r) => r._field == \"status\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> aggregateWindow(every: 2m, fn: last, createEmpty: false)\n\nunion(tables: [\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Direct\" then 100.0 else 0.0, _field: \"Direct\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Idle\" then 100.0 else 0.0, _field: \"Idle\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Navigation\" then 100.0 else 0.0, _field: \"Navigation\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Station\" then 100.0 else 0.0, _field: \"Station\"})) |> group(columns: [\"_field\"]),\n  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == \"Voyage\" then 100.0 else 0.0, _field: \"Voyage\"})) |> group(columns: [\"_field\"])\n])",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "edd9ef0c-7cef-4d36-a9a5-ee779e3353e1"
+          },
+          "query": "from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"leak_detect\")\n  |> filter(fn: (r) => r._field == \"status\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> aggregateWindow(every: 5m, fn: last, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: float(v: r._value), _field: \"No Leak\"}))\n  |> group(columns: [\"_field\"])",
+          "refId": "B"
+        }
+      ],
+      "title": "Leak detection",
+      "type": "timeseries"
     }
   ],
   "refresh": "",
@@ -878,6 +1306,6 @@
   "timezone": "",
   "title": "Mission mode distribution",
   "uid": "b13d2a0c-4ab2-4a4d-8552-3531e2bc019b",
-  "version": 100,
+  "version": 106,
   "weekStart": ""
 }
