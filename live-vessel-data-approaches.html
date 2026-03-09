@@ -1,0 +1,313 @@
+<h1 id="live-vessel-data-influxdb-approaches">Live Vessel Data → InfluxDB: Approaches</h1>
+<h2 id="goal">Goal</h2>
+<p>Stream vessel sensor data directly into InfluxDB in real-time instead of extracting from bag files post-mission. This enables live dashboards and threshold-based alerting (e.g., email on high temperature, low battery, leak detected).</p>
+<hr />
+<h2 id="current-pipeline-batchoffline">Current Pipeline (Batch/Offline)</h2>
+<pre><code>ros2 bag record → .db3 bag files → extract-bag.py → InfluxDB → Grafana</code></pre>
+<ul>
+<li>Data is recorded on the vessel using <code>ros2 bag record</code> which subscribes to ROS2 topics and saves them as .db3 files</li>
+<li>722 bag files (68 GB), 9.85M data points, 16 measurements extracted so far</li>
+<li>Two-pass extraction: mode timeline first, then sensor data</li>
+<li>All processing happens after the mission is complete — no live visibility</li>
+</ul>
+<hr />
+<h2 id="key-insight-ros2-supports-multiple-subscribers">Key Insight: ROS2 Supports Multiple Subscribers</h2>
+<p>ROS2 uses DDS (Data Distribution Service) as its middleware, which natively supports <strong>multiple subscribers on the same topic</strong>. This means <code>ros2 bag record</code> and a live InfluxDB writer can run simultaneously — both subscribe to the same topics, each gets every message independently. No changes to the recording command or vessel software are needed.</p>
+<pre><code>                        ┌→ ros2 bag record (continues saving .db3 files as backup)
+Vessel ROS2 Topics ─────┤
+                        └→ influxdb_writer node (writes to InfluxDB in real-time)</code></pre>
+<p>This is not a hack — it’s how ROS2’s pub-sub model is designed to work. Adding a subscriber has negligible overhead on publishers; DDS handles multicast delivery at the middleware level.</p>
+<hr />
+<h2 id="approach-1-ros2-subscriber-node-influxdb-recommended-for-prototype">Approach 1: ROS2 Subscriber Node → InfluxDB (Recommended for Prototype)</h2>
+<h3 id="how-it-works">How It Works</h3>
+<p>A Python ROS2 node runs alongside <code>ros2 bag record</code>, subscribing to the same live topics (<code>/temperature</code>, <code>/battery_state</code>, <code>/telemetry/state</code>, <code>/leak_detect</code>, etc.). On each message, it converts the data to an InfluxDB point and writes it directly.</p>
+<pre><code>                        ┌→ ros2 bag record (backup, unchanged)
+Vessel ROS2 Topics ─────┤
+                        └→ influxdb_writer_node → influxdb-client-python → InfluxDB → Grafana</code></pre>
+<p>The writer node can be launched alongside the bag recorder — either manually or in the same ROS2 launch file.</p>
+<h3 id="why-this-makes-sense-for-us">Why This Makes Sense for Us</h3>
+<ul>
+<li>We already have all 15 topic processors written in <code>extract-bag.py</code> — the message parsing, field extraction, and InfluxDB point creation logic can be reused directly</li>
+<li>Minimal new infrastructure — just one additional ROS2 node running in parallel with <code>ros2 bag record</code></li>
+<li>Bag recording continues as-is for archival/backup — zero risk to existing workflow</li>
+</ul>
+<h3 id="performance-data">Performance Data</h3>
+<ul>
+<li><strong>influxdb-client-python</strong> (v1.50.0, actively maintained) supports three write modes:
+<ul>
+<li>SYNCHRONOUS: blocks until write completes, easiest error handling</li>
+<li>BATCHING: accumulates points, sends in batches (default: 1,000 points or every 1 second)</li>
+<li>ASYNCHRONOUS: non-blocking writes</li>
+</ul></li>
+<li>Default batch config: 1,000 points per batch, 1s flush interval, 5 retries with exponential backoff</li>
+<li><strong>Optimal batch size for InfluxDB 2.x: 5,000 lines of line protocol</strong> (InfluxData recommendation)</li>
+<li><strong>Line protocol is ~2x faster than JSON</strong> for writes</li>
+<li><strong>Gzip compression provides up to 5x speed improvement</strong></li>
+</ul>
+<p>For our use case (~15 topics, most publishing at 1-50 Hz), we’re looking at roughly 200-1,000 points/second — well within what a single Python writer can handle.</p>
+<h3 id="influxdb-2.x-write-capacity-reference">InfluxDB 2.x Write Capacity Reference</h3>
+<table>
+<thead>
+<tr class="header">
+<th>Hardware</th>
+<th>Writes/sec</th>
+<th>Unique Series</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>2-4 cores, 2-4 GB RAM</td>
+<td>&lt; 5,000</td>
+<td>&lt; 100,000</td>
+</tr>
+<tr class="even">
+<td>4-6 cores, 8-32 GB RAM</td>
+<td>&lt; 250,000</td>
+<td>&lt; 1,000,000</td>
+</tr>
+<tr class="odd">
+<td>8+ cores, 32+ GB RAM</td>
+<td>&gt; 250,000</td>
+<td>&gt; 1,000,000</td>
+</tr>
+</tbody>
+</table>
+<p>Our server can comfortably handle our data rate.</p>
+<h3 id="existing-ros2-packages-that-do-this">Existing ROS2 Packages That Do This</h3>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 43%" />
+<col style="width: 26%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Package</th>
+<th>What It Does</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>diagnostic_remote_logging</code> (ROS official)</td>
+<td>Subscribes to <code>/diagnostics_agg</code>, batches and writes to InfluxDB v2</td>
+<td>Released ROS package, actively maintained</td>
+</tr>
+<tr class="even">
+<td><code>ros2_monitor_grafana</code></td>
+<td>Monitors ROS2 topic rates (Hz), writes to InfluxDB, displays in Grafana</td>
+<td>Active, Python-based</td>
+</tr>
+<tr class="odd">
+<td><code>ros2_data_collection</code></td>
+<td>Full data collection framework using Fluent Bit backend, supports InfluxDB</td>
+<td>Active, production-grade</td>
+</tr>
+<tr class="even">
+<td><code>ros2_diag2influxdb</code></td>
+<td>Stores ROS2 diagnostics in InfluxDB</td>
+<td>Smaller project</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pros">Pros</h3>
+<ul>
+<li>Lowest latency (~1-5ms to local InfluxDB)</li>
+<li>Simplest architecture (single additional node)</li>
+<li>Reuses our existing message processing code</li>
+<li>Full control over what data gets written and how</li>
+</ul>
+<h3 id="cons">Cons</h3>
+<ul>
+<li>Must run on a machine with access to the vessel’s ROS2 network</li>
+<li>No built-in offline resilience (if InfluxDB is unreachable, data is lost unless we add buffering)</li>
+<li>Tight coupling: ROS2 node must know InfluxDB connection details</li>
+</ul>
+<hr />
+<h2 id="approach-2-ros2-mqtt-bridge-telegraf-influxdb-best-for-production">Approach 2: ROS2 → MQTT Bridge → Telegraf → InfluxDB (Best for Production)</h2>
+<h3 id="how-it-works-1">How It Works</h3>
+<p>Same parallel subscriber principle — mqtt_client runs alongside <code>ros2 bag record</code>, subscribing to the same topics.</p>
+<pre><code>                        ┌→ ros2 bag record (backup, unchanged)
+Vessel ROS2 Topics ─────┤
+                        └→ mqtt_client → MQTT Broker → Telegraf mqtt_consumer → InfluxDB → Grafana</code></pre>
+<h3 id="components">Components</h3>
+<p><strong>mqtt_client (ika-rwth-aachen)</strong> — the most mature ROS2-MQTT bridge: - Written in C++ as a ROS2 component node - Supports ROS2 Humble, Jazzy, Kilted, Rolling - Bi-directional bridging with arbitrary ROS message types - Configurable MQTT QoS (0, 1, 2) and ROS QoS profiles - Built-in latency measurement - Supports TLS/SSL, auth, message buffering when disconnected - Local network overhead: single-digit milliseconds</p>
+<p><strong>Telegraf MQTT Consumer Plugin</strong>: - Subscribes to MQTT topics, parses payloads (JSON, line protocol, CSV) - Forwards to InfluxDB output plugin - Default batching: 1,000 metrics per write, 10s flush interval, 10,000 metric buffer - Throughput: 5,000+ messages/second easily with QoS 2 - 40+ processor plugins for data transformation (rename, filter, aggregate)</p>
+<p><strong>MQTT Broker Options</strong>:</p>
+<table>
+<thead>
+<tr class="header">
+<th>Broker</th>
+<th>Throughput</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Mosquitto</td>
+<td>~37,000 msg/sec</td>
+<td>Lightweight, single-threaded, good for our scale</td>
+</tr>
+<tr class="even">
+<td>EMQX</td>
+<td>100,000+ msg/sec</td>
+<td>Enterprise-grade, clustering support</td>
+</tr>
+</tbody>
+</table>
+<h3 id="why-consider-this">Why Consider This</h3>
+<ul>
+<li><strong>Decoupled</strong>: ROS2 only talks to MQTT, InfluxDB only talks to Telegraf — each component is independent</li>
+<li><strong>Offline resilient</strong>: MQTT broker queues messages in persistent sessions; Telegraf buffers metrics if InfluxDB is down</li>
+<li><strong>Multi-consumer</strong>: MQTT broker allows multiple subscribers — the same data can feed InfluxDB, a logging system, and other services simultaneously</li>
+<li><strong>No custom code for ingestion</strong>: purely config-driven from MQTT broker onward</li>
+</ul>
+<h3 id="note-on-telegraf-ros2-plugin">Note on Telegraf ROS2 Plugin</h3>
+<p>There is <strong>no native Telegraf ROS2 input plugin</strong>. GitHub issue #4692 has been open since 2018 with no development. The MQTT bridge approach is the community-accepted workaround.</p>
+<h3 id="pros-1">Pros</h3>
+<ul>
+<li>Full decoupling between ROS2 and data storage</li>
+<li>Offline resilience (MQTT QoS + broker persistence + Telegraf buffering)</li>
+<li>Multi-consumer support</li>
+<li>Telegraf handles batching, retries, and data transformation</li>
+<li>ROS-agnostic from the broker onward</li>
+</ul>
+<h3 id="cons-1">Cons</h3>
+<ul>
+<li>Highest complexity — 3 services to deploy and configure (mqtt_client, MQTT broker, Telegraf)</li>
+<li>Higher latency than direct write (~5-50ms locally)</li>
+<li>More moving parts to monitor and maintain</li>
+</ul>
+<hr />
+<h2 id="approach-3-incremental-bag-file-processing-quickest-to-implement">Approach 3: Incremental Bag File Processing (Quickest to Implement)</h2>
+<h3 id="how-it-works-2">How It Works</h3>
+<p><code>ros2 bag record</code> continues writing .db3 files as usual. A watcher script detects when new bag files are completed and triggers <code>extract-bag.py</code> to process and ingest them.</p>
+<pre><code>ros2 bag record → .db3 files → watcher (inotify/polling) → extract-bag.py → InfluxDB → Grafana</code></pre>
+<p>No parallel subscriber needed — this approach works with the existing bag files after they’re written.</p>
+<h3 id="why-consider-this-1">Why Consider This</h3>
+<ul>
+<li><strong>Absolutely zero changes to vessel software</strong> — <code>ros2 bag record</code> runs exactly as it does today</li>
+<li><strong>Uses our existing pipeline exactly as-is</strong> — <code>extract-bag.py</code> already handles incremental processing with file tracking</li>
+<li><strong>Simplest to implement</strong> — just a wrapper script with file watching</li>
+</ul>
+<h3 id="pros-2">Pros</h3>
+<ul>
+<li>No changes to vessel ROS2 nodes</li>
+<li>Proven pipeline (already processed 9.85M points successfully)</li>
+<li>Built-in deduplication (tracker skips already-processed files)</li>
+</ul>
+<h3 id="cons-2">Cons</h3>
+<ul>
+<li><strong>Not real-time</strong> — delayed by bag file rotation interval (typically 30s to several minutes)</li>
+<li>Depends on bag file being closed before processing (can’t read an open bag)</li>
+<li>Alerts will fire late (after bag is written, not when event occurs)</li>
+</ul>
+<hr />
+<h2 id="comparison-summary">Comparison Summary</h2>
+<table>
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 24%" />
+<col style="width: 29%" />
+<col style="width: 31%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Factor</th>
+<th>Direct Write</th>
+<th>MQTT + Telegraf</th>
+<th>Bag File Watcher</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Latency</strong></td>
+<td>~1-5ms</td>
+<td>~5-50ms</td>
+<td>Minutes (bag rotation)</td>
+</tr>
+<tr class="even">
+<td><strong>Complexity</strong></td>
+<td>Low (1 new node)</td>
+<td>High (3 new services)</td>
+<td>Very Low (1 script)</td>
+</tr>
+<tr class="odd">
+<td><strong>Code Reuse</strong></td>
+<td>High (reuse processors)</td>
+<td>Medium (need MQTT config)</td>
+<td>Full (existing pipeline)</td>
+</tr>
+<tr class="even">
+<td><strong>Offline Resilience</strong></td>
+<td>None by default</td>
+<td>MQTT QoS + broker + Telegraf buffer</td>
+<td>Inherent (bags are files)</td>
+</tr>
+<tr class="odd">
+<td><strong>Vessel Changes</strong></td>
+<td>New ROS2 node</td>
+<td>New ROS2 node (mqtt_client)</td>
+<td>None</td>
+</tr>
+<tr class="even">
+<td><strong>Real-time Alerting</strong></td>
+<td>Yes</td>
+<td>Yes</td>
+<td>No (delayed)</td>
+</tr>
+<tr class="odd">
+<td><strong>Multi-consumer</strong></td>
+<td>No</td>
+<td>Yes (MQTT fan-out)</td>
+<td>No</td>
+</tr>
+<tr class="even">
+<td><strong>Production Readiness</strong></td>
+<td>Prototype-ready</td>
+<td>Production-ready</td>
+<td>Stopgap solution</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="recommendation">Recommendation</h2>
+<h3 id="phase-1-now-approach-3-bag-file-watcher">Phase 1 (Now): Approach 3 — Bag File Watcher</h3>
+<ul>
+<li>Quickest win, no vessel changes needed</li>
+<li>Gets data flowing to dashboards with minimal delay</li>
+<li>Good enough for post-mission review and next-day analysis</li>
+</ul>
+<h3 id="phase-2-short-term-approach-1-direct-ros2-subscriber">Phase 2 (Short-term): Approach 1 — Direct ROS2 Subscriber</h3>
+<ul>
+<li>Reuse extract-bag.py processors in a live ROS2 node</li>
+<li>Enables real-time dashboards and alerting</li>
+<li>Good for controlled testing and demo environments</li>
+</ul>
+<h3 id="phase-3-production-approach-2-mqtt-bridge-telegraf">Phase 3 (Production): Approach 2 — MQTT Bridge + Telegraf</h3>
+<ul>
+<li>When reliability and multi-consumer support become requirements</li>
+<li>When operating in unreliable network conditions (shore-to-vessel link)</li>
+<li>When other systems also need the live data stream</li>
+</ul>
+<hr />
+<h2 id="whats-needed-to-proceed">What’s Needed to Proceed</h2>
+<ol type="1">
+<li>Confirm which machine will run the ingestion node (vessel onboard / shore-side server)</li>
+<li>Network access from that machine to InfluxDB server (192.168.14.168:8086)</li>
+<li>Decision on which topics to stream live vs continue recording to bags</li>
+<li>For Approach 2: decision on MQTT broker deployment location</li>
+</ol>
+<hr />
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://www.influxdata.com/blog/influxdb-python-client-library-deep-dive-writeapi/">InfluxDB Python Client — WriteAPI Deep Dive</a></li>
+<li><a href="https://docs.influxdata.com/influxdb/v2/write-data/best-practices/optimize-writes/">InfluxDB v2 Write Optimization</a></li>
+<li><a href="https://docs.influxdata.com/influxdb/v1/guides/hardware_sizing/">InfluxDB Hardware Sizing Guidelines</a></li>
+<li><a href="https://github.com/ika-rwth-aachen/mqtt_client">mqtt_client ROS2 Package (ika-rwth-aachen)</a></li>
+<li><a href="https://docs.influxdata.com/telegraf/v1/input-plugins/mqtt_consumer/">Telegraf MQTT Consumer Plugin</a></li>
+<li><a href="https://github.com/Minipada/ros2_data_collection">ros2_data_collection Framework</a></li>
+<li><a href="https://index.ros.org/p/diagnostic_remote_logging/">diagnostic_remote_logging (ROS Package)</a></li>
+<li><a href="https://arxiv.org/abs/2309.07496">Middleware Comparison for Distributed ROS2 Systems (arXiv)</a></li>
+<li><a href="https://www.emqx.com/en/blog/open-mqtt-benchmarking-comparison-mqtt-brokers-in-2023">MQTT Broker Benchmarks 2023 (EMQX)</a></li>
+</ul>

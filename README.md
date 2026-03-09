@@ -68,7 +68,7 @@ If you have access to the ROS bag files and want to extract from scratch:
 
 The extraction pipeline does more than copy data — for 722 bag files (68 GB), 9.85M data points:
 
-1. **Two-pass architecture:** First pass builds a complete mode timeline from `/control_mode/feedback` (must be sequential — mode transitions span files). Second pass extracts all sensor data and tags every point with the active mode via binary search.
+1. **Three-pass architecture:** Pass 1 builds a complete mode timeline from `/control_mode/feedback`. Pass 1b pre-computes battery consumption rates per mode (matching `mission_time_analysis` exactly). Pass 2 extracts all sensor data and tags every point with the active mode via binary search.
 2. **Custom deserialization:** 11 custom Rekise message types (CDR binary → Python objects) for each of the 9.85M points, plus unit conversions (quaternion → heading degrees).
 3. **I/O on both ends:** Reading 68 GB of SQLite-backed .db3 files + writing ~2,000 HTTP batches (5,000 points each) to InfluxDB.
 4. **Parallel processing:** 8 workers in the second pass (each with own file batch, mode timeline copy, and InfluxDB connection). Without parallelization, the same extraction takes 40+ minutes.
@@ -87,6 +87,7 @@ influxWithGraphana/
 ├── write.js                        # CSV → InfluxDB (legacy pipeline, Node.js)
 ├── data-types.json                 # CSV column mappings for write.js
 ├── docker-compose.yml              # Defines InfluxDB + Grafana containers
+├── grafana.ini                     # Grafana config (SMTP/alerting settings)
 ├── package.json                    # Node.js dependencies (@influxdata/influxdb-client)
 │
 ├── scripts/
@@ -108,7 +109,8 @@ influxWithGraphana/
 │   └── dashboards/
 │       ├── provider.yml            # Dashboard provider config (auto-reload every 10s)
 │       └── mission-overview/       # Folder name → becomes Grafana folder
-│           └── mode-distribution.json  # Dashboard: 8 panels (mission time analysis)
+│           ├── mode-distribution.json  # Dashboard: 8 panels (mission time analysis)
+│           └── navigation-analysis.json # Dashboard: navigation/odometry panels
 │
 ├── volumes/                        # Persistent data (bind-mounted into containers)
 │   ├── influxdb-data/              # InfluxDB database files
@@ -127,7 +129,8 @@ influxWithGraphana/
     ├── heading-comparison-panel.md # 3 heading sources, quaternion conversion, multi-line technique
     ├── leak-detection-panel.md     # Leak sensor panel, value mappings, step interpolation
     ├── data-verification-audit.md  # Full data audit: counts, rates, distributions, findings
-    ├── bar-charts.md               # Battery bar charts: difference() and join queries
+    ├── bar-charts.md               # Battery bar charts: pre-computed rates, Flux vs Python
+    ├── poc-complete-guide.md       # Complete POC: full pipeline walkthrough
     ├── docker-compose-explained.md # docker-compose.yml breakdown
     ├── docker-volumes.md           # Volume types: anonymous, named, bind mounts
     ├── grafana-provisioning.md     # How Grafana auto-loads config from files
@@ -141,7 +144,7 @@ influxWithGraphana/
 
 | File | Purpose |
 | ---- | ------- |
-| `extract-bag.py` | **Primary pipeline.** Reads ROS2 .db3 bag files and writes 16 measurements to InfluxDB. Two-pass: builds mode timeline, then extracts all sensor data with mode tags. Supports parallel processing. |
+| `extract-bag.py` | **Primary pipeline.** Reads ROS2 .db3 bag files and writes 17 measurements to InfluxDB. Three-pass: builds mode timeline (Pass 1), pre-computes battery rates per mode (Pass 1b), then extracts all sensor data with mode tags (Pass 2). Supports parallel processing. |
 | `inspect-bag.py` | Utility for inspecting ROS bag contents — lists topics, message types, message counts, and sample field values. |
 | `docker-compose.yml` | Runs InfluxDB (port 8086) and Grafana (port 3000) on a shared Docker network. Uses bind mounts for persistent storage and provisioning. |
 | `write.js` | Legacy CSV ingestion script. Config-driven via `data-types.json`. Usage: `node write.js --mission <name> --type <type> --csv <path>` |
@@ -156,6 +159,7 @@ Auto-loaded by Grafana on startup — no manual UI setup needed.
 | `provisioning/datasources/influxdb.yml` | InfluxDB datasource config (URL, token, org, bucket). Grafana connects via Docker network at `http://influxdb:8086`. |
 | `provisioning/dashboards/provider.yml` | Dashboard provider config. Auto-reloads every 10s. `foldersFromFilesStructure: true` maps subdirectories to Grafana folders. |
 | `provisioning/dashboards/mission-overview/mode-distribution.json` | Dashboard with 8 panels: mode distribution (pie), total battery drop (bar), consumption rate (bar), mode timeline with battery level, temperature over time, humidity over time, heading comparison (3 sources), leak detection. |
+| `provisioning/dashboards/mission-overview/navigation-analysis.json` | Navigation analysis dashboard with odometry and position panels. |
 
 ### Panel Templates
 
@@ -177,10 +181,10 @@ Reusable panel configs in `panel-templates/`. Copy into any dashboard and update
 | `project-status.md` | **Start here.** Current phase (prototype), roadmap to MVP and production, known limitations. |
 | `project-setup-guide.md` | Step-by-step setup: prerequisites, Docker, feeding data, viewing dashboards, troubleshooting. |
 | `data-pipeline-flow.md` | Architecture: ROS bag and CSV pipelines → InfluxDB → Grafana. Network topology. File locations. |
-| `rosbag-to-influxdb-extraction.md` | extract-bag.py deep dive: two-pass approach, custom message types, all 16 measurements, Grafana queries. |
+| `rosbag-to-influxdb-extraction.md` | extract-bag.py deep dive: three-pass approach, custom message types, all 17 measurements, Grafana queries. |
 | `rosbag-field-mapping.md` | ROS topics → dashboard requirements mapping. Which topics feed which charts. |
 | `mode-timeline-panel.md` | Combined mode+battery panel: stacked area trick, query structure, color scheme, tooltip limitations. |
-| `bar-charts.md` | Battery bar charts: why difference() not first-to-last, why join not reduce, mid-mission charging. |
+| `bar-charts.md` | Battery bar charts: pre-computed `battery_rates` measurement, why Flux can't match mission_time_analysis, simplified queries. |
 | `docker-compose-explained.md` | docker-compose.yml breakdown: services, ports, volumes, networks. |
 | `docker-volumes.md` | Docker storage: anonymous vs named volumes vs bind mounts. |
 | `grafana-provisioning.md` | How Grafana auto-loads config. Current provisioned dashboards. Workflow for editing. |
@@ -188,6 +192,7 @@ Reusable panel configs in `panel-templates/`. Copy into any dashboard and update
 | `heading-comparison-panel.md` | Heading comparison panel: 3 heading sources, quaternion-to-degrees conversion, multi-line panel technique. |
 | `leak-detection-panel.md` | Leak detection panel: status values, step interpolation, value mappings. |
 | `data-verification-audit.md` | Full data audit: point counts, sample rates, value distributions, critical findings (GNSS constant 90°, missing mission-001 data). |
+| `poc-complete-guide.md` | **Comprehensive POC document.** Full pipeline walkthrough from ROS bags to Grafana: infrastructure, extraction code, all 17 measurements, all 8 panels with queries explained, reproduction steps. |
 | `influxdb-basics.md` | Buckets, measurements, tags vs fields, Flux queries. |
 
 ## Feeding Data
@@ -211,7 +216,7 @@ python3 extract-bag.py --mission test --bag /path/to/file.db3 --dry-run
 python3 extract-bag.py --mission rosbag-20260223 --bag-dir /path/to/rosbags/ --force --workers 8
 ```
 
-Writes 16 measurements to InfluxDB. Every point tagged with `mission`, `vessel`, and `mode`.
+Writes 17 measurements to InfluxDB. Every point tagged with `mission`, `vessel`, and `mode`.
 See `concepts/rosbag-to-influxdb-extraction.md` for details.
 
 ### Pipeline 2: CSV Ingestion (Legacy)

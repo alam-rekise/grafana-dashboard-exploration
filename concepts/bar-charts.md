@@ -4,116 +4,93 @@
 
 Two bar charts visualizing battery performance per operational mode:
 
-1. **Total Battery Drop by Mode** — how much battery (%) was consumed in each mode across the entire mission
-2. **Battery Consumption Rate by Mode** — how fast battery drains per hour in each mode
+1. **Battery Consumption Rate** — how fast battery drains per hour (%/hour) in each mode
+2. **Total Battery Drop %** — how much battery (%) was consumed in each mode across the entire mission
 
-Both are panels inside the "Mission mode distribution" dashboard alongside the pie chart and mode timeline.
+Both read from the **pre-computed `battery_rates` measurement** written by `extract-bag.py` Pass 1b, which uses the exact same algorithm as `mission_time_analysis`.
 
 ## Data Source
 
-**InfluxDB measurements** (from ROS bag extraction via `extract-bag.py`):
-- `battery_telemetry` — charge_percentage field with mode tag on every point (from `/telemetry/battery_state`)
-- `mission_segments` — duration_s per mode segment (from `/control_mode/feedback`)
+**InfluxDB measurement**: `battery_rates` (pre-computed by `extract-bag.py` Pass 1b)
+- Fields: `rate_pct_per_hour`, `total_drop_pct`, `total_hours`, `total_seconds`, `pairs`
+- Tags: `mission`, `vessel`, `mode`
+- One point per mode per mission (summary data, stored at epoch timestamps)
 
-Previously these charts used CSV-imported `power_consumption` measurement (from `write.js`). That approach had pre-computed summary values (5 rows, one per mode). The current approach computes values dynamically from raw time-series data, which is more accurate and doesn't require re-importing when data changes.
+**Source data**: `battery_state` measurement (from `/battery_state` ROS topic)
+- Field: `percentage` (0-1 range)
+- This matches `mission_time_analysis` which uses the `/battery_state` topic
 
-## Flux Queries
+## Why Pre-Computed (not Flux)
+
+### The Flux approach and its limitations
+
+The original Flux queries computed rates at query time using `elapsed+difference+reduce`. This had two fundamental issues:
+
+1. **Cross-mode boundary contamination**: Flux groups by the mode *tag* on each point, then pairs consecutive readings within each group. But two readings tagged with the same mode can span a brief different-mode interruption. The 2s elapsed threshold caught most cases but not all edge cases (e.g., Voyage had 9.21%/hr instead of 9.19%/hr).
+
+2. **Floating-point accumulation order**: Flux's `reduce()` processes rows within mode groups in a different order than Python's chronological iteration, producing slightly different rounding across hundreds of pairs.
+
+### The correct approach (matches mission_time_analysis exactly)
+
+`extract-bag.py` Pass 1b iterates ALL battery readings chronologically and for each consecutive pair:
+1. Looks up the mode at **both** timestamps using the mode timeline
+2. **Only counts the pair if both readings are in the same mode**
+3. Skips pairs where modes differ (even if the readings are tagged with the same mode)
+
+This is identical to `mission_time_analysis`'s `_compute_power_consumption()` method (lines 319-349 of `mission_time_analyzer.py`).
+
+**Result**: All 5 modes now match `mission_time_analysis` exactly:
+- Direct: -5.60%/hr (was -5.59 with Flux)
+- Idle: 1.05%/hr
+- Navigation: 6.42%/hr
+- Station: 0.43%/hr
+- Voyage: 9.19%/hr (was 9.21 with Flux)
+
+## Flux Queries (simplified — just reads pre-computed values)
+
+### Battery Consumption Rate (%/hour)
+
+```flux
+from(bucket: "vessel-data")
+  |> range(start: 0)
+  |> filter(fn: (r) => r._measurement == "battery_rates")
+  |> filter(fn: (r) => r._field == "rate_pct_per_hour")
+  |> filter(fn: (r) => r.mission == "${mission}")
+  |> filter(fn: (r) => r.mode != "UNKNOWN" and r.mode != "NO_BAG_RECORD" and r.mode != "NO_DATA")
+  |> keep(columns: ["mode", "_value"])
+  |> group()
+  |> rename(columns: {_value: "Rate (%/hour)"})
+```
 
 ### Total Battery Drop by Mode
 
 ```flux
 from(bucket: "vessel-data")
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "battery_telemetry")
-  |> filter(fn: (r) => r._field == "charge_percentage")
+  |> range(start: 0)
+  |> filter(fn: (r) => r._measurement == "battery_rates")
+  |> filter(fn: (r) => r._field == "total_drop_pct")
   |> filter(fn: (r) => r.mission == "${mission}")
-  |> group()
-  |> sort(columns: ["_time"])
-  |> difference(nonNegative: false)
-  |> map(fn: (r) => ({r with _value: r._value * -100.0}))
-  |> group(columns: ["mode"])
-  |> sum()
+  |> filter(fn: (r) => r.mode != "UNKNOWN" and r.mode != "NO_BAG_RECORD" and r.mode != "NO_DATA")
   |> keep(columns: ["mode", "_value"])
   |> group()
   |> rename(columns: {_value: "Battery Drop (%)"})
 ```
 
-**Why this query works:**
-1. `group() |> sort(columns: ["_time"])` — puts ALL battery readings in chronological order regardless of mode
-2. `difference(nonNegative: false)` — computes point-to-point changes (e.g. 0.85 → 0.84 = -0.01)
-3. `map(fn: (r) => ({r with _value: r._value * -100.0}))` — converts to positive % (discharge = positive, charge = negative)
-4. `group(columns: ["mode"]) |> sum()` — sums all point-to-point drops within each mode
-
-**Why NOT first-to-last per mode:**
-The old approach (`reduce` with first/last value per mode group) was wrong because modes are interleaved throughout the mission. For example, Navigation appears in 60 separate segments — first-to-last would span the entire mission duration, not just Navigation segments. The `difference()` approach correctly captures only the actual changes during each mode's active periods.
-
-**Note on mid-mission charging:**
-The rosbag-20260223 mission had charging between 14:13 and 23:30 UTC (30,636 points with `is_charging=true`, mostly in Direct mode). This causes Direct mode to show negative battery drop (battery increased). To analyze discharge only, add `|> filter(fn: (r) => r.is_charging != "true")` before the group step.
-
-### Battery Consumption Rate by Mode
-
-```flux
-drop = from(bucket: "vessel-data")
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "battery_telemetry")
-  |> filter(fn: (r) => r._field == "charge_percentage")
-  |> filter(fn: (r) => r.mission == "${mission}")
-  |> group()
-  |> sort(columns: ["_time"])
-  |> difference(nonNegative: false)
-  |> map(fn: (r) => ({r with _value: r._value * -100.0}))
-  |> group(columns: ["mode"])
-  |> sum()
-  |> keep(columns: ["mode", "_value"])
-  |> group()
-
-duration = from(bucket: "vessel-data")
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "mission_segments")
-  |> filter(fn: (r) => r._field == "duration_s")
-  |> filter(fn: (r) => r.mission == "${mission}")
-  |> group(columns: ["mode"])
-  |> sum()
-  |> map(fn: (r) => ({r with _value: r._value / 3600.0}))
-  |> keep(columns: ["mode", "_value"])
-  |> group()
-
-join(tables: {drop: drop, duration: duration}, on: ["mode"])
-  |> map(fn: (r) => ({r with _value: r._value_drop / r._value_duration}))
-  |> keep(columns: ["mode", "_value"])
-  |> rename(columns: {_value: "Rate (%/hour)"})
-```
-
-**Why this query uses join instead of reduce:**
-The old `reduce`-based approach computed rate inline using `(first_val - last_val) / (last_time - first_time)`. This had two issues:
-1. Same first-to-last problem as battery drop (spans entire mission per mode)
-2. Nanosecond timestamp arithmetic in Flux is fragile and produced tiny unreadable values (0.0332 instead of 3.32)
-
-The join approach:
-- `drop`: total battery change per mode (same as battery drop query)
-- `duration`: total time in each mode from `mission_segments` (in hours)
-- Join on mode, divide drop by hours → clean readable %/hour values
-
-## Key Flux Patterns
-
-- `difference(nonNegative: false)` — point-to-point changes; `false` allows negative values (charging)
-- `rename(columns: {_value: "..."})` — replaces the default `_value` legend label with something readable
-- `keep(columns: ["mode", "_value"])` — strips all metadata, leaving only what the chart needs
-- `join(tables: {a: a, b: b}, on: ["key"])` — merges two queries; produces `_value_a` and `_value_b` columns
-- `${mission}` — template variable from the Mission dropdown
+Both use `range(start: 0)` because battery_rates are summary data stored at epoch timestamps.
 
 ## Grafana Panel Config
 
 Both charts use the `barchart` panel type with:
-- `colorByField` set to the renamed value column (e.g. "Battery Drop (%)")
+- `colorByField` set to the renamed value column
 - `color.mode: "continuous-GrYlRd"` — green-yellow-red gradient based on value
 - `xField: "mode"` — mode names on X axis
 - `showValue: "always"` — values displayed on bars
+- `axisLabel` on the left Y-axis ("Rate (%/hour)" or "Battery Drop (%)")
 
 ## Reusable Templates
 
 Saved in `panel-templates/`:
-- `bar-chart-battery-drop.json` — total battery drop panel
 - `bar-chart-consumption-rate.json` — consumption rate panel
+- `bar-chart-battery-drop.json` — total battery drop panel
 
-Both use `${DS_INFLUXDB}` as datasource UID for portability. Copy into any dashboard and update the bucket, measurement, field, and mission filter in the queries.
+Both use `${DS_INFLUXDB}` as datasource UID for portability.

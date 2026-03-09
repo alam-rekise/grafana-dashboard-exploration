@@ -14,20 +14,35 @@ Solution: bypass Excel entirely — read ROS bag directly and write to InfluxDB.
 
 ### The Two-Pass Approach
 
-**Pass 1 — Build Mode Timeline:**
-1. Read all `/control_mode/feedback` messages (ControlModeFeedback msg type)
-2. Each message has a `current_mode_name` field — the active mode (e.g. "Idle", "Navigation", "Direct", "Station", "Voyage")
-3. This topic only publishes on **mode change** (not continuously) — ~411 messages across 722 files
-4. Detect mode transitions (new segment only when mode actually changes)
-5. Result: list of segments with mode, start_time, end_time, duration_s
-6. Write as `mission_segments` measurement to InfluxDB
+**Pass 1 — Build Mode Timeline (parallelized):**
+1. Scan all bag files in parallel (16 workers) to collect:
+   - Bag intervals (start_time, end_time from `reader.start_time`/`reader.end_time`)
+   - `/control_mode/feedback` messages (~411 across 722 files)
+2. Compute **recording sessions** — merge adjacent bags (gap < 2s = same session)
+3. Build raw segments (new segment only when mode changes)
+4. **Extend segments to session boundaries** — since feedback only publishes on MODE CHANGE, extend first segment back to session start, last forward to session end
+5. **Split segments at session boundaries** — split segments spanning multiple sessions
+6. **Insert gap segments** — NO_DATA (within session, no feedback) and NO_BAG_RECORD (between sessions)
+7. **Merge consecutive** same-mode segments
+8. Write as `mission_segments` measurement to InfluxDB
+
+This matches `mission_time_analysis`'s `ModeSegmentExtractor` behavior (boundary extension, gap filling, segment splitting).
 
 **Important:** `/control_mode/status` (KeyValue[] array) was initially used but always reported "Idle".
-The correct mode source is `/control_mode/feedback` with `current_mode_name`, which matches
-the `mission_time_analysis` package used by Rekise for post-mission reports.
+The correct mode source is `/control_mode/feedback` with `current_mode_name`.
 
-**Pass 2 — Process All Sensor Topics:**
-1. Single iteration through the entire bag file (reads it once, not once per topic)
+**Pass 1b — Pre-Compute Battery Rates per Mode (parallelized):**
+1. Scan all bags in parallel (16 workers) to collect battery_state readings
+2. Sort all readings chronologically
+3. Iterate consecutive pairs, check mode at BOTH timestamps via mode timeline
+4. Only count pair if both readings are in the same mode (matches mission_time_analysis's `_compute_power_consumption()`)
+5. Accumulate total_drop and total_seconds per mode
+6. Write as `battery_rates` measurement to InfluxDB (one point per mode)
+
+This ensures battery bar charts match mission_time_analysis exactly — Flux's group-by-mode approach can't replicate the chronological dual-timestamp mode check.
+
+**Pass 2 — Process All Sensor Topics (16 workers):**
+1. Each worker opens one bag file, iterates all messages
 2. For each message:
    - Deserialize using typestore
    - Flatten nested fields (e.g. SbgEkfEuler.angle.x → roll)
@@ -37,10 +52,11 @@ the `mission_time_analysis` package used by Rekise for post-mission reports.
 
 ### Mode Lookup (Binary Search)
 Every sensor reading gets tagged with the mode active at its timestamp.
-Uses `bisect` for O(log n) lookup instead of O(n) linear scan.
+Uses `bisect_right` for O(log n) lookup with upper-bound check.
 Edge cases:
-- Timestamp before first mode segment → tagged as "PRE_MISSION"
-- Timestamp after last mode segment → tagged as "POST_MISSION"
+- Timestamp before first recording session → tagged as "UNKNOWN"
+- Timestamp after last segment end → tagged as "UNKNOWN"
+- Timestamp in NO_BAG_RECORD gap → tagged as "NO_BAG_RECORD"
 
 ### Custom Message Type Registration
 ROS2 bags from Rekise use custom message types (rkse_common_interfaces, rkse_telemetry_interfaces, etc.)
@@ -50,52 +66,48 @@ The rosbags library needs these registered before it can deserialize messages:
 ```python
 from rosbags.typesys.msg import get_types_from_msg
 
-# Define the message structure as text (same format as .msg files)
 custom_msg_defs = [
-    ("rkse_common_interfaces/msg/KeyValue", "string key\nstring value"),
     ("rkse_common_interfaces/msg/ControlModeFeedback",
      "std_msgs/Header header\nstring manual_preset_name\n"
      "string stationary_preset_name\nstring current_mode_name\n"
      "uint8 current_mode\nbuiltin_interfaces/Duration duration"),
-    ("rkse_telemetry_interfaces/msg/BatteryStateTelemetry", "..."),
     # ... more custom types
 ]
 
-# Parse and register
 all_types = {}
 for msgtype, msgdef in custom_msg_defs:
     all_types.update(get_types_from_msg(msgdef, msgtype))
 typestore.register(all_types)
 ```
 
-The .msg definitions were found in: `/home/alam/workspaces/swadheen_ws/src/`
-
 ## Data Structure in InfluxDB
 
 ### Tags (indexed, for filtering)
-- **mission**: e.g. "rosbag-20260223" — separates data per bag/mission
+- **mission**: e.g. "rosbag-20260223-v2" — separates data per bag/mission
 - **vessel**: e.g. "AUV_01"
-- **mode**: e.g. "Idle", "Navigation", "Direct", "Station", "Voyage" — the active mode at that timestamp (from /control_mode/feedback)
+- **mode**: e.g. "Idle", "Navigation", "Direct", "Station", "Voyage", "NO_BAG_RECORD", "UNKNOWN"
 
-### Measurements Written (15 total)
+### Measurements Written (17 total)
 
-| Measurement | Source Topic | Msg Count | Key Fields |
-|---|---|---|---|
-| mission_segments | /control_mode/feedback | 305 segments | duration_s, start_time_ns, end_time_ns, segment_number |
-| battery_state | /battery_state | 68 | voltage, current, charge, percentage, temperature |
-| temperature | /temperature | 238 | temperature_c |
-| humidity | /humidity | 238 | relative_humidity |
-| pressure | /pressure | 119 | fluid_pressure |
-| odometry | /odometry/filtered | 2387 | position x/y/z, orientation, linear/angular velocity |
-| navheading | /moving_base_second/navheading | 596 | orientation quaternion, angular velocity |
-| gnss | /gnss/fix | 598 | latitude, longitude, altitude, status |
-| vessel_mode | /vessel/mode | 1 | value (0=STAGING, 1=ACTIVE) |
-| telemetry_state | /telemetry/state | 1195 | lat, lon, heading, depth, altitude, speed, course, yaw_rate |
-| battery_telemetry | /telemetry/battery_state | 120 | voltage, charge_percentage, is_charging, error_code |
-| pack_status | /pack_status | 68 | 17 fields (soc, voltage, current, health, etc.) |
-| power_mgmt | /pm/feedback | 3316 | 23 fields (load_current, bus_voltage, temperature, etc.) |
-| leak_detect | /leak_detect | 119 | status |
-| ekf_euler | /imu/ellipse/sbg_ekf_euler | 2395 | roll, pitch, yaw, accuracy, 15 status flags |
+| Measurement | Source Topic | Key Fields |
+|---|---|---|
+| mission_segments | /control_mode/feedback | duration_s, start_time_ns, end_time_ns, segment_number |
+| battery_rates | /battery_state (pre-computed) | rate_pct_per_hour, total_drop_pct, total_hours, total_seconds, pairs |
+| battery_state | /battery_state | voltage, current, charge, percentage, temperature |
+| temperature | /temperature | temperature_c |
+| humidity | /humidity | relative_humidity |
+| pressure | /pressure | fluid_pressure |
+| odometry | /odometry/filtered | position x/y/z, orientation, linear/angular velocity |
+| navheading | /moving_base_second/navheading | orientation quaternion, angular velocity, heading_degrees |
+| gnss | /gnss/fix | latitude, longitude, altitude, status |
+| vessel_mode | /vessel/mode | value (0=STAGING, 1=ACTIVE) |
+| telemetry_state | /telemetry/state | lat, lon, heading, depth, altitude, speed, course, yaw_rate |
+| battery_telemetry | /telemetry/battery_state | voltage, charge_percentage, is_charging, error_code |
+| pack_status | /pack_status | 17 fields (soc, voltage, current, health, etc.) |
+| power_mgmt | /pm/feedback | 23 fields (load_current, bus_voltage, temperature, etc.) |
+| leak_detect | /leak_detect | status |
+| ekf_euler | /imu/ellipse/sbg_ekf_euler | roll, pitch, yaw, heading_degrees, accuracy, 15 status flags |
+| ahrs8 | /imu/ahrs8/data | orientation quaternion, angular velocity, heading_degrees |
 
 ### Why Mode as a Tag on Every Point?
 This enables maximum Grafana flexibility:
@@ -107,132 +119,70 @@ This enables maximum Grafana flexibility:
 ## Usage
 
 ```bash
-# Install dependency (one time)
-pip3 install influxdb-client
-
 # Dry run — single file
 python3 extract-bag.py --mission test-001 --bag /path/to/file.db3 --dry-run
 
-# Single file extraction
+# Full extraction — 16 parallel workers
+python3 extract-bag.py --mission rosbag-20260223-v2 --bag-dir /path/to/rosbags/ --force --workers 16
+
+# Sequential (1 worker, useful for debugging)
 python3 extract-bag.py --mission rosbag-20260223 --bag /path/to/file.db3
-
-# Batch — entire directory of .db3 files
-python3 extract-bag.py --mission rosbag-20260223 --bag-dir /path/to/rosbags/
-
-# Parallel — 8 workers (Pass 2 only, Pass 1 always sequential)
-python3 extract-bag.py --mission rosbag-20260223 --bag-dir /path/to/rosbags/ --workers 8
-
-# Force re-process (ignore tracking, re-seed everything)
-python3 extract-bag.py --mission rosbag-20260223 --bag-dir /path/to/rosbags/ --force --workers 8
-
-# With custom vessel name
-python3 extract-bag.py --mission rosbag-20260223 --bag /path/to/file.db3 --vessel AUV_02
 ```
+
+### Performance (722 files, 68 GB, 9.85M points)
+- Pass 1 (parallel scan): ~60s
+- Pass 2 (16 workers): ~130s
+- **Total: ~3.3 minutes**
 
 ## Grafana Queries for ROS Bag Data
 
 ### Mode Distribution (Pie Chart)
+Uses `range(start: 0)` to capture ALL segments regardless of dashboard time range.
+Excludes NO_DATA, includes NO_BAG_RECORD (matches mission_time_analysis).
+Unit: `dthms` (displays as hours:minutes).
 ```flux
 from(bucket: "vessel-data")
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> range(start: 0)
   |> filter(fn: (r) => r._measurement == "mission_segments")
   |> filter(fn: (r) => r._field == "duration_s")
   |> filter(fn: (r) => r.mission == "${mission}")
+  |> filter(fn: (r) => r.mode == "Direct" or r.mode == "Idle" or r.mode == "Navigation" or r.mode == "Station" or r.mode == "Voyage" or r.mode == "NO_BAG_RECORD")
   |> group(columns: ["mode"])
   |> sum()
   |> keep(columns: ["mode", "_value"])
   |> group()
 ```
 
-### Total Battery Drop per Mode (Bar Chart)
-Uses `difference()` for point-to-point changes — see `concepts/bar-charts.md` for detailed explanation.
+### Battery Consumption Rate per Mode (Bar Chart)
+Reads pre-computed values from `battery_rates` measurement (computed by Pass 1b).
+See `concepts/bar-charts.md` for detailed explanation.
 ```flux
 from(bucket: "vessel-data")
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "battery_telemetry")
-  |> filter(fn: (r) => r._field == "charge_percentage")
+  |> range(start: 0)
+  |> filter(fn: (r) => r._measurement == "battery_rates")
+  |> filter(fn: (r) => r._field == "rate_pct_per_hour")
   |> filter(fn: (r) => r.mission == "${mission}")
+  |> keep(columns: ["mode", "_value"])
   |> group()
-  |> sort(columns: ["_time"])
-  |> difference(nonNegative: false)
-  |> map(fn: (r) => ({r with _value: r._value * -100.0}))
-  |> group(columns: ["mode"])
-  |> sum()
+  |> rename(columns: {_value: "Rate (%/hour)"})
+```
+
+### Total Battery Drop per Mode (Bar Chart)
+Same pre-computed measurement, different field.
+```flux
+from(bucket: "vessel-data")
+  |> range(start: 0)
+  |> filter(fn: (r) => r._measurement == "battery_rates")
+  |> filter(fn: (r) => r._field == "total_drop_pct")
+  |> filter(fn: (r) => r.mission == "${mission}")
   |> keep(columns: ["mode", "_value"])
   |> group()
   |> rename(columns: {_value: "Battery Drop (%)"})
 ```
 
-### Battery Consumption Rate per Mode (Bar Chart)
-Uses join of battery drop + segment duration — see `concepts/bar-charts.md` for detailed explanation.
-```flux
-drop = from(bucket: "vessel-data")
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "battery_telemetry")
-  |> filter(fn: (r) => r._field == "charge_percentage")
-  |> filter(fn: (r) => r.mission == "${mission}")
-  |> group()
-  |> sort(columns: ["_time"])
-  |> difference(nonNegative: false)
-  |> map(fn: (r) => ({r with _value: r._value * -100.0}))
-  |> group(columns: ["mode"])
-  |> sum()
-  |> keep(columns: ["mode", "_value"])
-  |> group()
-
-duration = from(bucket: "vessel-data")
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "mission_segments")
-  |> filter(fn: (r) => r._field == "duration_s")
-  |> filter(fn: (r) => r.mission == "${mission}")
-  |> group(columns: ["mode"])
-  |> sum()
-  |> map(fn: (r) => ({r with _value: r._value / 3600.0}))
-  |> keep(columns: ["mode", "_value"])
-  |> group()
-
-join(tables: {drop: drop, duration: duration}, on: ["mode"])
-  |> map(fn: (r) => ({r with _value: r._value_drop / r._value_duration}))
-  |> keep(columns: ["mode", "_value"])
-  |> rename(columns: {_value: "Rate (%/hour)"})
-```
-
 ### Mode Timeline with Battery Level (Combined Time Series)
-Single panel with colored mode backgrounds and battery % line overlaid.
+Uses `battery_state.percentage`, `v.windowPeriod` + `fn: last` for adaptive resolution.
 See `concepts/mode-timeline-panel.md` for detailed explanation.
-
-**Query A — Mode backgrounds** (stacked areas, 0/100 values per mode):
-```flux
-data = from(bucket: "vessel-data")
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "battery_telemetry")
-  |> filter(fn: (r) => r._field == "charge_percentage")
-  |> filter(fn: (r) => r.mission == "${mission}")
-  |> group()
-  |> aggregateWindow(every: 2m, fn: last, createEmpty: false)
-
-union(tables: [
-  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == "Direct" then 100.0 else 0.0, _field: "Direct"})) |> group(columns: ["_field"]),
-  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == "Idle" then 100.0 else 0.0, _field: "Idle"})) |> group(columns: ["_field"]),
-  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == "Navigation" then 100.0 else 0.0, _field: "Navigation"})) |> group(columns: ["_field"]),
-  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == "Station" then 100.0 else 0.0, _field: "Station"})) |> group(columns: ["_field"]),
-  data |> map(fn: (r) => ({_time: r._time, _value: if r.mode == "Voyage" then 100.0 else 0.0, _field: "Voyage"})) |> group(columns: ["_field"])
-])
-```
-
-**Query B — Battery % line** (overlaid on top):
-```flux
-from(bucket: "vessel-data")
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "battery_telemetry")
-  |> filter(fn: (r) => r._field == "charge_percentage")
-  |> filter(fn: (r) => r.mission == "${mission}")
-  |> group()
-  |> sort(columns: ["_time"])
-  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)
-  |> map(fn: (r) => ({_time: r._time, _value: r._value * 100.0, _field: "Battery %"}))
-  |> group(columns: ["_field"])
-```
 
 ### Any Sensor Filtered by Mode (example: temperature during Navigation)
 ```flux

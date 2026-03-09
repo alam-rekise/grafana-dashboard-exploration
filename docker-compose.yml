@@ -2,6 +2,7 @@ services:
   influxdb:
     image: influxdb:2.7
     container_name: influxdb
+    restart: unless-stopped
     ports:
       - "8086:8086"
     volumes:
@@ -13,12 +14,14 @@ services:
   grafana:
     image: grafana/grafana:10.1.2
     container_name: grafana
+    restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
       - ./volumes/grafana-data:/var/lib/grafana
       - ./provisioning/datasources:/etc/grafana/provisioning/datasources
       - ./provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana.ini:/etc/grafana/grafana.ini
     networks:
       - influx-net
 

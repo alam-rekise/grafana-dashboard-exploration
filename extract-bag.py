@@ -164,6 +164,7 @@ class ModeTimeline:
     def __init__(self, segments):
         self.segments = segments
         self.start_times = [seg["start_time"] for seg in segments]
+        self.end_times = [seg["end_time"] for seg in segments]
 
     def lookup(self, timestamp_ns):
         if not self.segments:
@@ -172,41 +173,119 @@ class ModeTimeline:
         idx = bisect.bisect_right(self.start_times, timestamp_ns) - 1
 
         if idx < 0:
-            return self.segments[0]["mode"]
+            return "UNKNOWN"
+
+        # Check upper bound — timestamp must be within the segment
+        if timestamp_ns >= self.end_times[idx]:
+            return "UNKNOWN"
 
         return self.segments[idx]["mode"]
 
 
-def build_mode_timeline(bag_files):
-    print("=== Pass 1: Building mode timeline ===")
-    print(f"  Scanning {len(bag_files)} bag files for /control_mode/feedback...")
+# --- Sub-functions for building the mode timeline ---
 
+def _scan_single_bag(bag_path):
+    """Worker function: scan one bag for time bounds and feedback events."""
+    worker_typestore = get_typestore(Stores.ROS2_HUMBLE)
+    worker_types = {}
+    for msgtype, msgdef in custom_msg_defs:
+        worker_types.update(get_types_from_msg(msgdef, msgtype))
+    worker_typestore.register(worker_types)
+
+    try:
+        with Reader(bag_path) as reader:
+            if reader.message_count == 0:
+                return None, []
+
+            bag_info = {
+                "start_time": reader.start_time,
+                "end_time": reader.end_time,
+                "path": bag_path,
+            }
+
+            events = []
+            if "/control_mode/feedback" in reader.topics:
+                for connection, timestamp, rawdata in reader.messages():
+                    if connection.topic == "/control_mode/feedback":
+                        msg = worker_typestore.deserialize_cdr(rawdata, connection.msgtype)
+                        mode_name = msg.current_mode_name or "UNKNOWN"
+                        events.append((timestamp, mode_name))
+
+            return bag_info, events
+    except Exception as e:
+        print(f"    WARNING: Could not read {os.path.basename(bag_path)}: {e}")
+        return None, []
+
+
+def collect_bag_intervals_and_mode_events(bag_files, num_workers=16):
+    """Scan all bags in parallel: collect bag start/end times and feedback events."""
+    bag_intervals = []
     mode_events = []
 
-    for i, bag_path in enumerate(bag_files):
-        with Reader(bag_path) as reader:
-            if "/control_mode/feedback" not in reader.topics:
-                if (i + 1) % 100 == 0:
-                    print(f"    Scanned {i + 1}/{len(bag_files)} files...")
+    workers = min(num_workers, len(bag_files))
+    completed = 0
+
+    with Pool(processes=workers) as pool:
+        for bag_info, events in pool.imap_unordered(_scan_single_bag, bag_files):
+            completed += 1
+            if completed % 100 == 0 or completed == len(bag_files):
+                print(f"    Scanned {completed}/{len(bag_files)} files...")
+
+            if bag_info is None:
                 continue
-            for connection, timestamp, rawdata in reader.messages():
-                if connection.topic == "/control_mode/feedback":
-                    msg = typestore.deserialize_cdr(rawdata, connection.msgtype)
-                    mode_name = msg.current_mode_name or "UNKNOWN"
-                    mode_events.append((timestamp, mode_name))
-        if (i + 1) % 100 == 0 or i == len(bag_files) - 1:
-            print(f"    Scanned {i + 1}/{len(bag_files)} files...")
+
+            bag_idx = len(bag_intervals)
+            bag_info["bag_idx"] = bag_idx
+            bag_intervals.append(bag_info)
+
+            for ts, mode in events:
+                mode_events.append((ts, mode, bag_idx))
 
     mode_events.sort(key=lambda x: x[0])
-    print(f"  Read {len(mode_events)} feedback messages")
+    bag_intervals.sort(key=lambda x: x["start_time"])
+    return bag_intervals, mode_events
 
+
+def compute_recording_sessions(bag_intervals, gap_threshold_ns=2_000_000_000):
+    """Merge adjacent bag intervals into recording sessions.
+
+    Bags within gap_threshold_ns (default 2s) of each other are considered
+    part of the same recording session. Gaps larger than this indicate
+    the recorder was stopped and restarted (NO_BAG_RECORD gaps).
+    """
+    if not bag_intervals:
+        return []
+
+    sessions = [{
+        "start_time": bag_intervals[0]["start_time"],
+        "end_time": bag_intervals[0]["end_time"],
+        "bag_count": 1,
+    }]
+
+    for bag in bag_intervals[1:]:
+        gap = bag["start_time"] - sessions[-1]["end_time"]
+        if gap <= gap_threshold_ns:
+            # Same session — extend
+            sessions[-1]["end_time"] = max(sessions[-1]["end_time"], bag["end_time"])
+            sessions[-1]["bag_count"] += 1
+        else:
+            # New session
+            sessions.append({
+                "start_time": bag["start_time"],
+                "end_time": bag["end_time"],
+                "bag_count": 1,
+            })
+
+    return sessions
+
+
+def build_raw_segments(mode_events):
+    """Create segments from sorted mode events — new segment on mode change."""
     if not mode_events:
-        print("  WARNING: No /control_mode/feedback messages found!")
-        return ModeTimeline([])
+        return []
 
-    # Build segments — new segment only when mode changes
     segments = []
-    for ts, mode in mode_events:
+    for ts, mode, bag_idx in mode_events:
         if not segments or mode != segments[-1]["mode"]:
             if segments:
                 segments[-1]["end_time"] = ts
@@ -214,14 +293,221 @@ def build_mode_timeline(bag_files):
                 "mode": mode,
                 "start_time": ts,
                 "end_time": None,
-                "segment_number": len(segments) + 1,
             })
 
-    # Close last segment with last event timestamp
+    # Close last segment
     segments[-1]["end_time"] = mode_events[-1][0]
+    return segments
 
-    # Calculate durations
+
+def extend_segments_to_sessions(segments, mode_events, bag_intervals, sessions):
+    """Extend first/last segment per recording session to session boundaries.
+
+    Since /control_mode/feedback only publishes on MODE CHANGE, the first
+    message tells the CURRENT mode (active since session start). We extend
+    the first segment back to session start and last segment forward to
+    session end.
+    """
+    if not segments or not sessions:
+        return segments
+
+    for session in sessions:
+        sess_start = session["start_time"]
+        sess_end = session["end_time"]
+
+        # Find segments within this session
+        session_segs = [
+            s for s in segments
+            if s["start_time"] < sess_end and s["end_time"] > sess_start
+        ]
+
+        if not session_segs:
+            # Find the last feedback event before this session
+            # to determine what mode was active
+            last_mode = None
+            for ts, mode, _ in mode_events:
+                if ts <= sess_start:
+                    last_mode = mode
+                else:
+                    break
+            if last_mode:
+                segments.append({
+                    "mode": last_mode,
+                    "start_time": sess_start,
+                    "end_time": sess_end,
+                })
+            continue
+
+        session_segs.sort(key=lambda s: s["start_time"])
+
+        # Extend first segment back to session start
+        first = session_segs[0]
+        if first["start_time"] > sess_start:
+            first["start_time"] = sess_start
+
+        # Extend last segment forward to session end
+        last = session_segs[-1]
+        if last["end_time"] < sess_end:
+            last["end_time"] = sess_end
+
+    segments.sort(key=lambda s: s["start_time"])
+    return segments
+
+
+def split_at_session_boundaries(segments, sessions):
+    """Split segments that span multiple recording sessions at session boundaries."""
+    if not segments or not sessions:
+        return segments
+
+    result = []
     for seg in segments:
+        # Find all sessions that overlap with this segment
+        overlapping = [
+            s for s in sessions
+            if seg["start_time"] < s["end_time"] and seg["end_time"] > s["start_time"]
+        ]
+
+        if len(overlapping) <= 1:
+            result.append(seg)
+        else:
+            # Split at each session boundary
+            for sess in overlapping:
+                split_start = max(seg["start_time"], sess["start_time"])
+                split_end = min(seg["end_time"], sess["end_time"])
+                if split_end > split_start:
+                    result.append({
+                        "mode": seg["mode"],
+                        "start_time": split_start,
+                        "end_time": split_end,
+                    })
+
+    result.sort(key=lambda s: s["start_time"])
+    return result
+
+
+def insert_gap_segments(segments, sessions):
+    """Fill gaps between segments with NO_DATA or NO_BAG_RECORD.
+
+    NO_DATA: gap within a recording session (bag recording, no feedback)
+    NO_BAG_RECORD: gap between recording sessions (bag not running)
+    """
+    if not segments or not sessions:
+        return segments
+
+    overall_start = sessions[0]["start_time"]
+    overall_end = sessions[-1]["end_time"]
+
+    # Collect all time boundaries
+    boundaries = set()
+    boundaries.add(overall_start)
+    boundaries.add(overall_end)
+    for seg in segments:
+        boundaries.add(seg["start_time"])
+        boundaries.add(seg["end_time"])
+    for sess in sessions:
+        boundaries.add(sess["start_time"])
+        boundaries.add(sess["end_time"])
+
+    sorted_bounds = sorted(boundaries)
+
+    # Build segment lookup for quick checks
+    def get_mode_at(t):
+        for seg in segments:
+            if seg["start_time"] <= t < seg["end_time"]:
+                return seg["mode"]
+        return None
+
+    def is_within_session(t):
+        for sess in sessions:
+            if sess["start_time"] <= t <= sess["end_time"]:
+                return True
+        return False
+
+    # Build complete timeline
+    final = []
+    for i in range(len(sorted_bounds) - 1):
+        start = sorted_bounds[i]
+        end = sorted_bounds[i + 1]
+        if end <= start:
+            continue
+
+        mode = get_mode_at(start)
+        if mode:
+            final.append({"mode": mode, "start_time": start, "end_time": end})
+        else:
+            mid = (start + end) // 2
+            if is_within_session(mid):
+                final.append({"mode": "NO_DATA", "start_time": start, "end_time": end})
+            else:
+                final.append({"mode": "NO_BAG_RECORD", "start_time": start, "end_time": end})
+
+    return final
+
+
+def merge_consecutive_segments(segments):
+    """Merge adjacent segments with the same mode."""
+    if not segments:
+        return []
+
+    merged = [dict(segments[0])]  # copy first
+    for seg in segments[1:]:
+        if seg["mode"] == merged[-1]["mode"] and seg["start_time"] == merged[-1]["end_time"]:
+            merged[-1]["end_time"] = seg["end_time"]
+        else:
+            merged.append(dict(seg))
+
+    return merged
+
+
+def build_mode_timeline(bag_files):
+    """Main orchestrator: build mode timeline matching mission_time_analysis behavior.
+
+    Pipeline:
+    1. Collect bag intervals (start/end times) and feedback events
+    2. Compute recording sessions (merge adjacent bags)
+    3. Build raw segments (mode change detection)
+    4. Extend segments to session boundaries
+    5. Split segments at session boundaries
+    6. Insert gap segments (NO_DATA, NO_BAG_RECORD)
+    7. Merge consecutive same-mode segments
+    """
+    print("=== Pass 1: Building mode timeline ===")
+    print(f"  Scanning {len(bag_files)} bag files...")
+
+    # Step 1: Collect bag intervals and feedback events
+    bag_intervals, mode_events = collect_bag_intervals_and_mode_events(bag_files)
+    print(f"  Found {len(bag_intervals)} bags with data, {len(mode_events)} feedback messages")
+
+    if not mode_events:
+        print("  WARNING: No /control_mode/feedback messages found!")
+        return ModeTimeline([])
+
+    # Step 2: Compute recording sessions
+    sessions = compute_recording_sessions(bag_intervals)
+    print(f"  Recording sessions: {len(sessions)}")
+    for i, sess in enumerate(sessions):
+        duration_s = (sess["end_time"] - sess["start_time"]) / 1e9
+        print(f"    Session {i+1}: {sess['bag_count']} bags, {duration_s:.0f}s ({duration_s/3600:.1f}h)")
+
+    # Step 3: Build raw segments
+    segments = build_raw_segments(mode_events)
+    raw_count = len(segments)
+
+    # Step 4: Extend segments to session boundaries
+    segments = extend_segments_to_sessions(segments, mode_events, bag_intervals, sessions)
+
+    # Step 5: Split at session boundaries
+    segments = split_at_session_boundaries(segments, sessions)
+
+    # Step 6: Insert gap segments
+    segments = insert_gap_segments(segments, sessions)
+
+    # Step 7: Merge consecutive same-mode segments
+    segments = merge_consecutive_segments(segments)
+
+    # Assign segment numbers and calculate durations
+    for i, seg in enumerate(segments):
+        seg["segment_number"] = i + 1
         seg["duration_ns"] = seg["end_time"] - seg["start_time"]
         seg["duration_s"] = seg["duration_ns"] / 1e9
 
@@ -230,9 +516,10 @@ def build_mode_timeline(bag_files):
     for seg in segments:
         mode_counts[seg["mode"]] = mode_counts.get(seg["mode"], 0) + 1
 
-    print(f"  Found {len(segments)} mode segments:")
+    print(f"  Raw segments: {raw_count} → Final: {len(segments)} (after extension/gaps/merge)")
     for mode, count in sorted(mode_counts.items()):
-        print(f"    {mode}: {count} segments")
+        total_s = sum(s["duration_s"] for s in segments if s["mode"] == mode)
+        print(f"    {mode}: {count} segments ({total_s:.0f}s / {total_s/3600:.1f}h)")
 
     return ModeTimeline(segments)
 
@@ -623,6 +910,126 @@ def filter_new_files(bag_files, tracker):
 # ====================================================================
 # Main
 # ====================================================================
+def _scan_battery(bag_path):
+    """Worker function: scan one bag for battery_state readings."""
+    worker_typestore = get_typestore(Stores.ROS2_HUMBLE)
+    worker_types = {}
+    for msgtype, msgdef in custom_msg_defs:
+        worker_types.update(get_types_from_msg(msgdef, msgtype))
+    worker_typestore.register(worker_types)
+
+    readings = []
+    try:
+        with Reader(bag_path) as reader:
+            if "/battery_state" not in reader.topics:
+                return readings
+            for connection, timestamp, rawdata in reader.messages():
+                if connection.topic == "/battery_state":
+                    msg = worker_typestore.deserialize_cdr(rawdata, connection.msgtype)
+                    pct = float(msg.percentage)
+                    if not (math.isnan(pct) or math.isinf(pct)):
+                        readings.append((timestamp, pct))
+    except Exception as e:
+        print(f"    WARNING: Could not read battery from {os.path.basename(bag_path)}: {e}")
+    return readings
+
+
+def compute_battery_rates(all_bag_files, mode_timeline, mission, vessel, write_api):
+    """Pre-compute battery consumption rates per mode — matches mission_time_analysis exactly.
+
+    Algorithm: iterate ALL battery readings chronologically, check mode at BOTH timestamps
+    in each consecutive pair. Only count pairs where both readings are in the same mode.
+    This avoids cross-mode-boundary contamination that Flux grouping can't handle.
+
+    Writes to InfluxDB as 'battery_rates' measurement (one point per mode).
+    """
+    print("=== Pass 1b: Computing battery rates per mode ===")
+
+    # Collect all battery_state readings from bags
+    battery_readings = []  # [(timestamp_ns, percentage), ...]
+
+    # Parallel scan for battery readings
+    workers = min(16, len(all_bag_files))
+    completed = 0
+    with Pool(processes=workers) as pool:
+        for readings in pool.imap_unordered(_scan_battery, all_bag_files):
+            completed += 1
+            if completed % 100 == 0 or completed == len(all_bag_files):
+                print(f"    Scanned {completed}/{len(all_bag_files)} files for battery...")
+            battery_readings.extend(readings)
+
+    battery_readings.sort(key=lambda r: r[0])
+    print(f"  Found {len(battery_readings)} battery readings")
+
+    if len(battery_readings) < 2:
+        print("  Not enough battery readings to compute rates")
+        return
+
+    # Iterate chronologically, check mode at BOTH timestamps (same as mission_time_analysis)
+    mode_stats = {}  # {mode: {"total_drop": float, "total_seconds": float, "pairs": int}}
+
+    for i in range(len(battery_readings) - 1):
+        prev_ts, prev_pct = battery_readings[i]
+        curr_ts, curr_pct = battery_readings[i + 1]
+
+        dt_s = (curr_ts - prev_ts) / 1e9
+        if dt_s <= 0:
+            continue
+
+        # Find mode at BOTH timestamps
+        mode_start = mode_timeline.lookup(prev_ts)
+        mode_end = mode_timeline.lookup(curr_ts)
+
+        # Only count if BOTH are in the same real mode
+        if mode_start is None or mode_end is None:
+            continue
+        if mode_start != mode_end:
+            continue
+        if mode_start in ("UNKNOWN", "NO_BAG_RECORD", "NO_DATA"):
+            continue
+
+        mode = mode_start
+        delta_pct = prev_pct - curr_pct  # positive = discharging
+
+        if mode not in mode_stats:
+            mode_stats[mode] = {"total_drop": 0.0, "total_seconds": 0.0, "pairs": 0}
+
+        mode_stats[mode]["total_drop"] += delta_pct
+        mode_stats[mode]["total_seconds"] += dt_s
+        mode_stats[mode]["pairs"] += 1
+
+    # Compute rates and write to InfluxDB
+    rate_points = []
+    # Use a fixed timestamp for summary data (epoch + 1 day per mode to avoid collisions)
+    base_ts = 1_000_000_000  # 1 second after epoch in ns
+
+    print("  Battery rates per mode:")
+    for mode, stats in sorted(mode_stats.items()):
+        hours = stats["total_seconds"] / 3600.0
+        rate = (stats["total_drop"] * 100.0) / hours if hours > 0 else 0.0
+        total_drop_pct = stats["total_drop"] * 100.0
+
+        print(f"    {mode}: drop={total_drop_pct:.2f}%, hours={hours:.2f}h, rate={rate:.2f}%/hr, pairs={stats['pairs']}")
+
+        tags = {"mission": mission, "vessel": vessel, "mode": mode}
+        fields = {
+            "rate_pct_per_hour": rate,
+            "total_drop_pct": total_drop_pct,
+            "total_hours": hours,
+            "total_seconds": stats["total_seconds"],
+            "pairs": stats["pairs"],
+        }
+        point = create_point("battery_rates", base_ts, fields, tags, {})
+        rate_points.append(point)
+        base_ts += 1_000_000_000  # offset each mode by 1s
+
+    if write_api and rate_points:
+        write_api.write(bucket=INFLUX_BUCKET, record=rate_points, write_precision=WritePrecision.NS)
+        print(f"  Wrote {len(rate_points)} battery_rates points to InfluxDB")
+    elif not write_api:
+        print(f"  Dry run — would write {len(rate_points)} battery_rates points")
+
+
 def natural_sort_key(path):
     """Sort file paths naturally: _0, _1, _2, ... _10, _11 (not _0, _1, _10, _11, _2)"""
     name = os.path.basename(path)
@@ -660,12 +1067,13 @@ def main():
     else:
         bag_files, skipped = filter_new_files(all_bag_files, tracker)
 
-    if not bag_files:
-        print(f"All {len(all_bag_files)} files already processed for mission '{args.mission}'.")
-        print(f"Use --force to re-process everything.")
-        return
+    all_processed = len(bag_files) == 0
 
-    total_size_mb = sum(os.path.getsize(f) for f in bag_files) / (1024 * 1024)
+    if all_processed:
+        bag_files = []  # Pass 2 will be skipped
+        total_size_mb = 0
+    else:
+        total_size_mb = sum(os.path.getsize(f) for f in bag_files) / (1024 * 1024)
 
     # --- Setup ---
     print("=== Setup ===")
@@ -676,7 +1084,7 @@ def main():
     if len(bag_files) > 1:
         print(f"    First: {os.path.basename(bag_files[0])}")
         print(f"    Last:  {os.path.basename(bag_files[-1])}")
-    else:
+    elif len(bag_files) == 1:
         print(f"    File: {bag_files[0]}")
     print(f"  Vessel:   {args.vessel}")
     print(f"  Dry run:  {args.dry_run}")
@@ -721,7 +1129,22 @@ def main():
         print("  Done.")
     print()
 
-    # --- Pass 2: Process all sensor topics across ALL bag files ---
+    # --- Pass 1b: Pre-compute battery rates per mode ---
+    # (matches mission_time_analysis: iterate chronologically, check mode at BOTH timestamps)
+    compute_battery_rates(all_bag_files, mode_timeline, args.mission, args.vessel, write_api)
+
+    # --- Pass 2: Process all sensor topics ---
+    if not bag_files:
+        print("=== Pass 2: Skipped (all files already processed) ===")
+        elapsed = time.time() - start_time
+        print(f"\n=== Summary ===")
+        print(f"  Pass 1 + 1b only (no new sensor data to process)")
+        print(f"  Elapsed: {elapsed:.1f}s ({elapsed/60:.1f} min)")
+        if client:
+            client.close()
+        print("Done!")
+        return
+
     num_workers = min(args.workers, len(bag_files))
     print(f"=== Pass 2: Processing sensor topics ({num_workers} workers) ===")
 

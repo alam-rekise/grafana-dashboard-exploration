@@ -2,104 +2,113 @@
 
 ## What It Shows
 
-Leak sensor status over time with mode-colored backgrounds. The panel displays the state of the pico leak detector across all 722 missions, showing when and where leaks were detected.
+Leak sensor status over time with mode-colored backgrounds. The panel displays the state of the pico leak detector across all 722 missions, using a **two-series split** to visually distinguish normal operation from leak events:
 
-The status line (green) shows:
+- **No Leak** (green dots) — status == 0, normal operation
+- **Leak Detected** (red dots) — status > 0, leak event detected
+
+The status values are:
 - **0** = No Leak
 - **1** = Sensor A - Back
 - **2** = Sensor B - Front
 - **3** = Both Sensors
 
-A green horizontal line indicates active monitoring, stepping up/down when the status changes. The colored background regions show which vessel mode was active at each timestamp.
-
-Y-axis: 0-3 (fixed range with custom tick spacing to show all 4 status values).
+This matches the visual style of `mission_time_analysis` charts where leak events are highlighted in red.
 
 ## Data Sources
 
 | Component | InfluxDB Measurement | Field | Source Topic | Raw Format |
 |---|---|---|---|---|
-| Leak Status Line | `leak_detect` | `status` | `/leak_detect` | rkse_common_interfaces/msg/LeakStatus (int) |
-| Mode Backgrounds | `ekf_euler` | `heading_degrees` | `/imu/ellipse/sbg_ekf_euler` | Euler angle yaw (radians) |
-
-The leak status values are stored as integers in the `leak_detect` measurement. The mode information comes from the `ekf_euler` measurement's `mode` tag (same tag used by temperature/humidity panels).
+| Leak Status | `leak_detect` | `status` | `/leak_detect` | rkse_common_interfaces/msg/LeakStatus (int) |
+| Mode Backgrounds | `leak_detect` | `status` | `/leak_detect` | (uses mode tag) |
 
 ## Data Collection
 
-The pico leak detector publishes status updates to `/leak_detect` whenever the sensor state changes or at regular intervals. Across 722 bag files (68 GB):
+The pico leak detector publishes status updates to `/leak_detect`. Across 722 bag files (68 GB):
 
 - **Total leak_detect points**: 84,616
 - **Average per file**: ~117 points
 - **Actual status values observed**: 0 and 1 only
   - No instances of Sensor B (value 2) or Both Sensors (value 3)
   - At least one "Sensor A - Back" event (value 1) occurred during missions
-  - This suggests the back leak sensor may be more sensitive or positioned to detect water ingress earlier
 
-## Value Mapping in Grafana
+## How the Panel Works
 
-Grafana converts the numeric status values to human-readable text using value mappings:
-
-```
-0 → "No Leak"
-1 → "Sensor A - Back"
-2 → "Sensor B - Front"
-3 → "Both Sensors"
-```
-
-These mappings are configured in the panel's field overrides for the leak status series. The display always shows the text label, while the Y-axis tick values remain 0, 1, 2, 3.
-
-## How Multiple Series Work on One Panel
-
-The panel has 2 Flux queries (A, B) that render together:
+The panel has 3 Flux queries (A, B, C):
 
 ### Query A — Mode Backgrounds
 
-Reads `ekf_euler.heading_degrees` data and extracts the `mode` tag. Creates 5 series (Direct, Idle, Navigation, Station, Voyage). Each series shows 100 when the mode is active, 0 otherwise. These stack as filled areas creating the colored backgrounds.
+Reads `leak_detect.status` data and creates 5 mode series. Uses `v.windowPeriod` + `fn: last` for adaptive resolution.
 
-### Query B — Leak Status Line
+```flux
+data = from(bucket: "vessel-data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "leak_detect")
+  |> filter(fn: (r) => r._field == "status")
+  |> filter(fn: (r) => r.mission == "${mission}")
+  |> group()
+  |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)
 
-Reads `leak_detect.status` field and renames it to "Leak Status". Returns the raw integer values (0-3) as a line series. Uses step interpolation (`stepAfter`) so the line jumps between discrete states instead of interpolating.
+union(tables: [
+  data |> map(...) -- one per mode (Direct, Idle, Navigation, Station, Voyage)
+])
+```
 
-### How Grafana Renders Them Together
+### Query B — No Leak (green dots)
 
-Both queries return time-series data into the same panel using **stacking groups**:
+Filters for status == 0 and shows as green dots. Uses `fn: max` to ensure brief leaks within an aggregation window aren't hidden.
 
-- The mode series (from query A) are in **stacking group "A"** — they stack to form the background
-- The leak status line (from query B) is in **stacking group "B"** with `mode: "none"` — it overlays independently on top without stacking
+```flux
+from(bucket: "vessel-data")
+  |> filter(fn: (r) => r._measurement == "leak_detect")
+  |> filter(fn: (r) => r._field == "status")
+  |> filter(fn: (r) => r.mission == "${mission}")
+  |> group()
+  |> sort(columns: ["_time"])
+  |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)
+  |> filter(fn: (r) => r._value == 0)
+  |> map(fn: (r) => ({_time: r._time, _value: float(v: r._value), _field: "No Leak"}))
+  |> group(columns: ["_field"])
+```
 
-The leak status series has a field override that sets:
-- Color: green (#56A64B)
-- Line width: 2
-- Draw style: line
-- Line interpolation: stepAfter
-- Value mappings: 0→"No Leak", 1→"Sensor A - Back", 2→"Sensor B - Front", 3→"Both Sensors"
+### Query C — Leak Detected (red dots)
 
-The mode series have overrides that hide them from tooltips (`hideFrom.tooltip: true`) so hovering shows only the leak status, not the mode values.
+Filters for status > 0 and shows as red dots. Uses `fn: max` so brief leaks that occur within an aggregation window are preserved (not averaged away to 0).
 
-This follows the same reusable pattern as the temperature and humidity panels.
+```flux
+from(bucket: "vessel-data")
+  |> filter(fn: (r) => r._measurement == "leak_detect")
+  |> filter(fn: (r) => r._field == "status")
+  |> filter(fn: (r) => r.mission == "${mission}")
+  |> group()
+  |> sort(columns: ["_time"])
+  |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)
+  |> filter(fn: (r) => r._value > 0)
+  |> map(fn: (r) => ({_time: r._time, _value: float(v: r._value), _field: "Leak Detected"}))
+  |> group(columns: ["_field"])
+```
+
+### Why `fn: max` for Leak Detection
+
+Using `fn: last` could miss brief leak events that occur mid-window but clear before the window end. Using `fn: max` ensures the highest status in any aggregation window is preserved — if any leak occurred during the window, max will catch it.
 
 ## Panel Configuration
 
 - Type: Time Series
-- Mode backgrounds: stacked area series from query A
-- Leak status line: step-interpolated line from query B
-- Aggregation: 2m intervals for backgrounds, no aggregation for leak status (uses raw data points)
-- Tooltip: `mode: "single"` (Grafana 10.1.2 "all" mode is broken with stacked series)
-- Right Y-axis: Status, range 0-3 with 5 ticks (0.0, 1.0, 2.0, 3.0 at custom intervals)
-- Step interpolation: stepAfter (discrete steps between status values)
+- Mode backgrounds: stacked area series from Query A
+- **No Leak** series (Query B): green (#56A64B), `showPoints: "always"`, `pointSize: 5`, `fillOpacity: 30`, `lineWidth: 0`
+- **Leak Detected** series (Query C): red (#F2495C), `showPoints: "always"`, `pointSize: 10`, `fillOpacity: 100`, `lineWidth: 0`
+- Both leak series: stacking group "B" mode "none", stepAfter interpolation
+- Aggregation: `v.windowPeriod` for all queries (adaptive resolution)
+- Tooltip: `mode: "single"` (Grafana 10.1.2 "all" mode broken with stacked series)
+- Right Y-axis: Status, range 0-3
 
-## Why Step Interpolation?
+## Why Two Series Instead of One
 
-The leak detector returns discrete integer status values (0, 1, 2, or 3). Linear interpolation would create false intermediate values between states. Step interpolation (`stepAfter`) keeps the value constant until the next data point, accurately representing the detector's discrete state changes.
-
-For example, transitioning from "No Leak" (0) to "Sensor A - Back" (1):
-- **With linear interpolation**: the line would tilt, suggesting brief intermediate values that never actually occurred
-- **With step interpolation**: the line stays flat at 0, then jumps to 1, accurately showing the state change was instantaneous
-
-## Integration with Mission Timeline
-
-The leak detection panel (Panel 8) sits alongside the mode+battery timeline and other sensor panels in the dashboard. The mode-colored backgrounds create visual alignment across all time-series panels, making it easy to correlate leak events with specific mission phases (Direct, Idle, Navigation, Station, or Voyage).
-
-For example, if a leak is detected during a Navigation phase, the background will be blue and the leak status line will step up to 1 or higher.
+The previous approach used a single green line for all leak status values. Splitting into two series (No Leak + Leak Detected) provides:
+1. **Visual alarm**: Red dots immediately draw attention to leak events
+2. **Consistency**: Matches the `mission_time_analysis` chart style where leaks are highlighted in red
+3. **Different dot sizes**: Leak events use larger dots (pointSize: 10) for emphasis
 
 ## Data Volume
 
@@ -107,4 +116,4 @@ For example, if a leak is detected during a Navigation phase, the background wil
 |---|---|---|
 | leak_detect | 84,616 | ~117 |
 
-The leak detector publishes infrequently compared to high-frequency sensors like IMU (ekf_euler: ~2,288 points/file) or AHRS8 (~2,393 points/file). This is normal for event-driven sensors — status updates occur mainly when the sensor state changes or at periodic check intervals.
+The leak detector publishes infrequently compared to high-frequency sensors. This is normal for event-driven sensors.

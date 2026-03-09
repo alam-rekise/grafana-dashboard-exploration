@@ -1,6 +1,6 @@
 {
   "_doc": "Reusable bar chart panel: shows battery consumption rate (%/hour) grouped by mode.",
-  "_usage": "Copy this panel into any dashboard. Uses a join of two sub-queries: 'drop' computes total battery discharge per mode (via difference + sum), 'duration' sums segment durations per mode from mission_segments. The join divides drop by hours to get rate. Replace bucket, measurements, fields, and mission filter.",
+  "_usage": "Copy this panel into any dashboard. Reads pre-computed battery_rates from InfluxDB (computed by extract-bag.py Pass 1b using same algorithm as mission_time_analysis). Replace bucket and mission filter.",
   "datasource": {
     "type": "influxdb",
     "uid": "${DS_INFLUXDB}"
@@ -13,8 +13,8 @@
       "custom": {
         "axisCenteredZero": false,
         "axisColorMode": "text",
-        "axisLabel": "",
-        "axisPlacement": "auto",
+        "axisLabel": "Rate (%/hour)",
+        "axisPlacement": "left",
         "fillOpacity": 80,
         "gradientMode": "none",
         "hideFrom": {
@@ -73,8 +73,8 @@
   },
   "targets": [
     {
-      "_comment": "Joins battery drop (difference sum) with segment duration (mission_segments sum) to compute rate per mode. Replace bucket, measurements, fields, and mission filter.",
-      "query": "drop = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"battery_telemetry\")\n  |> filter(fn: (r) => r._field == \"charge_percentage\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> difference(nonNegative: false)\n  |> map(fn: (r) => ({r with _value: r._value * -100.0}))\n  |> group(columns: [\"mode\"])\n  |> sum()\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> group()\n\nduration = from(bucket: \"vessel-data\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mission_segments\")\n  |> filter(fn: (r) => r._field == \"duration_s\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> group(columns: [\"mode\"])\n  |> sum()\n  |> map(fn: (r) => ({r with _value: r._value / 3600.0}))\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> group()\n\njoin(tables: {drop: drop, duration: duration}, on: [\"mode\"])\n  |> map(fn: (r) => ({r with _value: r._value_drop / r._value_duration}))\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> rename(columns: {_value: \"Rate (%/hour)\"})",
+      "_comment": "Reads pre-computed rate from battery_rates measurement (computed by extract-bag.py matching mission_time_analysis algorithm).",
+      "query": "from(bucket: \"vessel-data\")\n  |> range(start: 0)\n  |> filter(fn: (r) => r._measurement == \"battery_rates\")\n  |> filter(fn: (r) => r._field == \"rate_pct_per_hour\")\n  |> filter(fn: (r) => r.mission == \"${mission}\")\n  |> filter(fn: (r) => r.mode != \"UNKNOWN\" and r.mode != \"NO_BAG_RECORD\" and r.mode != \"NO_DATA\")\n  |> keep(columns: [\"mode\", \"_value\"])\n  |> group()\n  |> rename(columns: {_value: \"Rate (%/hour)\"})",
       "refId": "A"
     }
   ],
